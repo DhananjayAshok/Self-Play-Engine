@@ -11,6 +11,7 @@ dependencies = [
     "accelerate",
     "anthropic",
     "click",
+    "editables",
     "huggingface-hub",
     "numpy",
     "openai",
@@ -32,4 +33,5 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["self_play", "self_play_env", "lm_utils"]
 # Expose only the packages above, not main.py, configs/ or scripts/ from the repo root.
+# dev-mode-exact installs an import hook that needs `editables` at runtime (listed above).
 dev-mode-exact = true

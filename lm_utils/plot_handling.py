@@ -1,8 +1,8 @@
 import seaborn as sns
 import pandas as pd
 from typing import Any, Callable, Optional
-from utils.parameter_handling import load_parameters
-from utils.log_handling import log_error, log_info, log_warn, log_dict
+from lm_utils.parameter_handling import load_parameters
+from lm_utils.log_handling import log_error, log_info, log_warn, log_dict
 import matplotlib.pyplot as plt
 import os
 

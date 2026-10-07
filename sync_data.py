@@ -1,5 +1,5 @@
-from utils.parameter_handling import load_parameters, compute_secondary_parameters
-from utils import log_error, log_info, log_warn
+from lm_utils.parameter_handling import load_parameters, compute_secondary_parameters
+from lm_utils import log_error, log_info, log_warn
 import click
 from huggingface_hub import HfApi
 import os

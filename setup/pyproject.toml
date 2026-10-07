@@ -1,0 +1,21 @@
+[project]
+name = "self-play"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = "==3.12.6"
+dependencies = [
+    "accelerate>=1.15.0",
+    "anthropic>=1.12.0",
+    "click>=8.5.0",
+    "huggingface-hub>=1.33.0",
+    "numpy>=2.5.3",
+    "openai>=3.26.0",
+    "pandas>=3.0.6",
+    "pillow>=12.3.0",
+    "seaborn>=0.13.2",
+    "tokenizers>=0.23.2",
+    "torch>=2.14.1",
+    "tqdm>=4.70.1",
+    "transformers>=5.19.0",
+]

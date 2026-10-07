@@ -1,5 +1,5 @@
 source configs/config.env || { echo "configs/config.env not found"; exit 1; }
-source setup/.venv/bin/activate || { echo "Virtual environment not found."; exit 1; }
+source prime-rl/.venv/bin/activate || { echo "Virtual environment not found."; exit 1; }
 PROJECT_ROOT=$(pwd) # expects to be run from root, always. 
 
 # args_to_flags <assoc_array_name>

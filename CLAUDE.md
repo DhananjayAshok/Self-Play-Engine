@@ -12,18 +12,26 @@ This file provides guidance for AI assistants working on projects derived from t
 
 ## Environment Setup
 
-This project uses `uv` for dependency management. The uv project lives in `setup/` (not the project root).
+This project uses `uv` for dependency management, with a single environment: prime-rl's (`prime-rl/.venv`, Linux only). The root `pyproject.toml` declares this project's dependencies and is installed into that environment as an editable path dependency of the `prime-rl` submodule. It has no entry points and exposes only `self_play`, `self_play_env` and `lm_utils`.
+
+Create or update the environment with (from root):
+```
+cd prime-rl
+uv sync --all-extras
+cd ..
+```
 
 Whenever you start work, you must activate (always from project root):
 ```bash
-source setup/.venv/bin/activate
+source prime-rl/.venv/bin/activate
 ```
-Especially if you are going to consider uv pip installing anything, you must only do it in this projects setup env. 
+Especially if you are going to consider uv pip installing anything, you must only do it in this environment. Never run `uv sync` or `uv run` from the repo root; that would create a second environment there.
 
-If you want to make a package dependency official, add it with (from root):
+If you want to make a package dependency official, add it to the root `pyproject.toml` without locking, then relock and commit inside prime-rl (from root):
 ```
-cd setup
-uv add <name>
+uv add --frozen <name>
+cd prime-rl
+uv lock
 cd ..
 ```
 ---
@@ -65,7 +73,7 @@ See [BASH_TEMPLATE.md](BASH_TEMPLATE.md) for the standard argument parsing templ
 **Every bash script must source both of the following** (either directly or via `scripts/utils.sh`):
 ```bash
 source configs/config.env || { echo "configs/config.env not found"; exit 1; }
-source setup/.venv/bin/activate || { echo "Virtual environment not found."; exit 1; }
+source prime-rl/.venv/bin/activate || { echo "Virtual environment not found."; exit 1; }
 ```
 
 This ensures config variables (`storage_dir`, `WANDB_PROJECT`, etc.) are available as shell environment variables and the correct Python is active. Never run project bash scripts without this sourcing in place.
@@ -75,7 +83,7 @@ This ensures config variables (`storage_dir`, `WANDB_PROJECT`, etc.) are availab
 ## Python Code Structure
 
 ### Philosophy
-Code should be **modular** — split logic into files and subdirectories by concern. Do not create pip-installable packages (no `src/` layout, no entry points in `pyproject.toml`) unless explicitly requested.
+Code should be **modular** — split logic into files and subdirectories by concern. Do not create pip-installable packages (no `src/` layout, no entry points in `pyproject.toml`) unless explicitly requested. The root `pyproject.toml` is the one requested exception: it exists only so prime-rl's environment can import this project (see Environment Setup).
 
 ### Entry Point Philosohpy (`main.py` structure)
 The primary script click group for a given set of functionalities. The `main.py` file is just an example placeholder and you should create separate files of this nature for every independant script-like functionality you want in python. Commands are implemented in separate files and registered here:
@@ -225,6 +233,6 @@ Read .claude/settings.json for the list of permitted commands. You can compose a
 Never use compound commands (e.g. cat x && echo y etc.). Instead, write them to tmp.sh and do bash tmp.sh
 
 
-So if you want to run some python code after sourcing the environment, don't try the compound command: "source setup/.venv/bin/activate && python -c ...", but rather write this string to a tmp.sh and run bash tmp.sh
+So if you want to run some python code after sourcing the environment, don't try the compound command: "source prime-rl/.venv/bin/activate && python -c ...", but rather write this string to a tmp.sh and run bash tmp.sh
 
 When doing this, always use bash tmp.sh, and not the absolute path to tmp.sh

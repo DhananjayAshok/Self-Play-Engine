@@ -6,7 +6,7 @@ A template for Python research projects. Provides standardised environment setup
 
 ## Checklist
 
-1. Do [setup](setup/README.md)
+1. Create the environment (see Reproduction)
 2. Checkout llm-utils to the latest commit
 3. Create symlink with llm-utils/setup/.venv and wherever your actual env is
 4. Add all and commit
@@ -15,18 +15,23 @@ A template for Python research projects. Provides standardised environment setup
 
 ## Reproduction
 
-This project uses Python with [uv](https://docs.astral.sh/uv/) for dependency management. See [setup/README.md](setup/README.md) for full instructions.
+This project uses Python 3.12 with [uv](https://docs.astral.sh/uv/) for dependency management. There is one environment, prime-rl's (`prime-rl/.venv`, Linux only). The root `pyproject.toml` is installed into it as an editable dependency of the `prime-rl` submodule.
 
 Quick start (from project root):
 ```bash
 
-git pull <url> --recursive
+git clone <url>
 cd <project_name>
-cd setup && uv sync
+git submodule update --init prime-rl llm-utils
+cd prime-rl
+# Only if this machine has no GitHub SSH key (prime-rl's nested submodules use git@ URLs):
+# git config --global url."https://github.com/".insteadOf git@github.com:
+git submodule update --init -- deps/verifiers deps/renderers deps/prime-envs deps/pydantic-config
+uv sync --all-extras
 cd ..
 cd llm-utils/setup && uv sync
 cd ../../
-source setup/.venv/bin/activate
+source prime-rl/.venv/bin/activate
 ```
 
 Then fill in your local values in `configs/private_vars.yaml` (replacing any `PLACEHOLDER` entries) and generate the shell config:

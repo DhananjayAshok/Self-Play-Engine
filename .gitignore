@@ -173,7 +173,6 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
-setup/.venv
 configs/config.env
 results/
 storage/

@@ -23,4 +23,4 @@ eval "$to_run_command"
 
 # Return and reactivate project environment
 cd "$currdir" || { echo "Could not return to original directory"; exit 1; }
-source "setup/.venv/bin/activate" || { echo "Could not source project env"; exit 1; }
+source "prime-rl/.venv/bin/activate" || { echo "Could not source project env"; exit 1; }

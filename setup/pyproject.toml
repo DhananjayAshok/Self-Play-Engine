@@ -10,7 +10,7 @@ dependencies = [
     "click>=8.5.0",
     "huggingface-hub>=1.33.0",
     "numpy>=2.5.3",
-    "openai>=3.26.0",
+    "openai==2.54.0",
     "pandas>=3.0.6",
     "pillow>=12.3.0",
     "seaborn>=0.13.2",
@@ -18,4 +18,8 @@ dependencies = [
     "torch>=2.14.1",
     "tqdm>=4.70.1",
     "transformers>=5.19.0",
+    "verifiers",
 ]
+
+[tool.uv.sources]
+verifiers = { path = "../verifiers", editable = true }

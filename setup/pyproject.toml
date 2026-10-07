@@ -18,8 +18,4 @@ dependencies = [
     "torch>=2.14.1",
     "tqdm>=4.70.1",
     "transformers>=5.19.0",
-    "verifiers",
 ]
-
-[tool.uv.sources]
-verifiers = { path = "../verifiers", editable = true }

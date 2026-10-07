@@ -5,3 +5,6 @@
 [submodule "verifiers"]
 	path = verifiers
 	url = https://github.com/DhananjayAshok/verifiers.git
+[submodule "prime-rl"]
+	path = prime-rl
+	url = https://github.com/DhananjayAshok/prime-rl.git

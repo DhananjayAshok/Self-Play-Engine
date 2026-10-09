@@ -6,13 +6,13 @@ This file provides guidance for AI assistants working on projects derived from t
 
 ## ⚠️ Project Scope — Read First
 
-**You are working on this project only.** This codebase shares file names and structure with other projects derived from the same template (`lm_utils/parameter_handling.py`, `configs/private_vars.yaml`, etc. exist in multiple sibling projects). **This does not mean they are connected in any way.** Never read, reference, or modify files belonging to any other project. Even if you are aware of sibling projects, their parameters, configs, and logic are entirely irrelevant and must not influence anything you do here. You will never be asked to make edits to more than one project at a time.
+**You are working on this project only.** This codebase shares file names and structure with other projects derived from the same template (`project_utils/parameter_handling.py`, `configs/private_vars.yaml`, etc. exist in multiple sibling projects). **This does not mean they are connected in any way.** Never read, reference, or modify files belonging to any other project. Even if you are aware of sibling projects, their parameters, configs, and logic are entirely irrelevant and must not influence anything you do here. You will never be asked to make edits to more than one project at a time.
 
 ---
 
 ## Environment Setup
 
-This project uses `uv` for dependency management, with a single environment: prime-rl's (`prime-rl/.venv`, Linux only). The root `pyproject.toml` declares this project's dependencies and is installed into that environment as an editable path dependency of the `prime-rl` submodule. It has no entry points and exposes only `self_play`, `self_play_env` and `lm_utils`.
+This project uses `uv` for dependency management, with a single environment: prime-rl's (`prime-rl/.venv`, Linux only). The root `pyproject.toml` declares this project's dependencies and is installed into that environment as an editable path dependency of the `prime-rl` submodule. It has no entry points and exposes only `self_play`, `self_play_env` and `project_utils`.
 
 Create or update the environment with (from root):
 ```
@@ -129,7 +129,7 @@ Always force every argument to every method to be a named parameter with def fun
 Load **once** at `__init__`, store as `self._parameters`, and thread it explicitly to all methods and child objects. Never re-call `load_parameters()` inside methods.
 
 ```python
-from lm_utils import load_parameters, log_info, log_error
+from project_utils import load_parameters, log_info, log_error
 
 class MyProcessor:
     def __init__(self, *, some_arg, parameters=None):
@@ -158,7 +158,7 @@ def my_command(parameters, arg):
 ## Logging
 
 ```python
-from lm_utils import log_error, log_warn, log_info, log_dict
+from project_utils import log_error, log_warn, log_info, log_dict
 ```
 
 **Always pass `parameters` as a named argument** to ensure output goes to the configured log file:
@@ -172,7 +172,7 @@ Calling without `parameters` is safe but logs to console only — fine for quick
 
 **`log_error` terminates execution.** Only use it for errors that are so bad, it is safer to discontinue execution. You do not need to manually handle termination once you call this. 
 
-**Action required on new project setup**: Rename the logger from `"PROJECT_NAME"` to the actual project name in `lm_utils/fundamental.py`.
+**Action required on new project setup**: Rename the logger from `"PROJECT_NAME"` to the actual project name in `project_utils/fundamental.py`.
 
 ---
 
@@ -197,7 +197,7 @@ model_save_path="$storage_dir/models/$exp_name/"
 When there are too many hyperparameters to encode in a name, use `hash_meta_dict` for the path and `write_meta` to maintain a human-readable record:
 
 ```python
-from lm_utils.hash_handling import hash_meta_dict, write_meta
+from project_utils.hash_handling import hash_meta_dict, write_meta
 
 args = {"model": "gpt-4", "temperature": 0.7, "max_tokens": 512, ...}
 exp_hash = hash_meta_dict(args)
@@ -214,7 +214,7 @@ write_meta(save_path, args, parameters)
 ## Artifact Tracking
 
 ```python
-from lm_utils import write_meta, add_meta_details
+from project_utils import write_meta, add_meta_details
 
 args = {"lr": 1e-4, "batch_size": 32, "epochs": 10}
 meta_hash = write_meta("results/model_outputs/", args, parameters)

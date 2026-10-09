@@ -1,7 +1,7 @@
 import os
 import yaml
 from typing import Any, Optional
-from lm_utils.fundamental import get_logger
+from project_utils.fundamental import get_logger
 
 
 def load_yaml(yaml_path: str) -> dict[str, Any]:

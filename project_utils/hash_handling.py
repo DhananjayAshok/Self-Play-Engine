@@ -2,8 +2,8 @@ import os
 import yaml
 import datetime
 from typing import Any, Optional
-from lm_utils.fundamental import meta_dict_to_str
-from lm_utils.log_handling import log_warn
+from project_utils.fundamental import meta_dict_to_str
+from project_utils.log_handling import log_warn
 import hashlib
 
 

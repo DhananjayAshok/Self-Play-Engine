@@ -1,7 +1,7 @@
 from typing import Any, Optional
 from collections.abc import Sequence
-from lm_utils.parameter_handling import load_parameters
-from lm_utils.log_handling import log_info, log_error
+from project_utils.parameter_handling import load_parameters
+from project_utils.log_handling import log_info, log_error
 from tqdm import tqdm
 import numpy as np
 

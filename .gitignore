@@ -177,3 +177,5 @@ configs/config.env
 results/
 storage/
 *.out
+# vf-eval run directories
+outputs/

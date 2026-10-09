@@ -1,0 +1,30 @@
+# Smoke test for the verifiers path: two OpenRouter models play rock paper scissors.
+# From the repo root, with prime-rl/.venv active and OPENROUTER_API_KEY exported:
+#   vf-eval @ eval_configs/smoke.toml --dry-run
+#   vf-eval @ eval_configs/smoke.toml
+model = "openai/gpt-4o-mini"
+push = false              # the default uploads the run to the Prime Intellect platform
+max_concurrent = 2
+output_dir = "outputs"
+
+[select]
+limit = 2                 # the taskset is infinite, so the number of games must be set
+
+[client]                  # fallback endpoint for any seat that does not pin one
+type = "eval"
+base_url = "https://openrouter.ai/api/v1"
+api_key_var = "OPENROUTER_API_KEY"
+
+[sampling]
+max_tokens = 256
+
+[env]
+rounds = 3
+
+[env.taskset]
+id = "self-play-env"
+
+# seat0 uses the top-level model; seat1 pins a different one to check per-seat models
+# and that a pinned seat is marked untrainable.
+[env.seat1]
+model = "meta-llama/llama-3.1-8b-instruct"

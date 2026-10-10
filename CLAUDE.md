@@ -12,7 +12,7 @@ This file provides guidance for AI assistants working on projects derived from t
 
 ## Environment Setup
 
-This project uses `uv` for dependency management, with a single environment: prime-rl's (`prime-rl/.venv`, Linux only). The root `pyproject.toml` declares this project's dependencies and is installed into that environment as an editable path dependency of the `prime-rl` submodule. It has no entry points and exposes only `self_play`, `self_play_env` and `project_utils`.
+This project uses `uv` for dependency management, with a single environment: prime-rl's (`prime-rl/.venv`, Linux only). The root `pyproject.toml` declares this project's dependencies and is installed into that environment as an editable path dependency of the `prime-rl` submodule. It has no entry points and exposes only `self_play` (the engine, which never imports verifiers), `self_play_verifiers` (the verifiers env, taskset and harness) and `project_utils`.
 
 Create or update the environment with (from root):
 ```

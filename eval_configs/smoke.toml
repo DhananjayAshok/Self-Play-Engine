@@ -1,30 +1,30 @@
-# Smoke test for the verifiers path: two OpenRouter models play rock paper scissors.
-# From the repo root, with prime-rl/.venv active and OPENROUTER_API_KEY exported:
-#   vf-eval @ eval_configs/smoke.toml --dry-run
-#   vf-eval @ eval_configs/smoke.toml
-model = "openai/gpt-4o-mini"
+# Smoke test for the verifiers path: a local vLLM model plays copycat rock paper scissors.
+# Four rounds cover every dialogue mode, talk and thinking turns. From the repo root, with
+# the vLLM server up (VLLM_API_KEY exported if the server was started with --api-key):
+#   bash scripts/eval.sh --config eval_configs/smoke.toml --name smoke-001
+#   bash scripts/eval.sh --config eval_configs/smoke.toml --name smoke-001 --base_url http://<node>:8000/v1
+#   bash scripts/eval.sh --name smoke-001 --resume true      # after an interruption
+model = "google/gemma-4-31b-it"
 push = false              # the default uploads the run to the Prime Intellect platform
 max_concurrent = 2
-output_dir = "outputs"
 
 [select]
 limit = 2                 # the taskset is infinite, so the number of games must be set
 
 [client]                  # fallback endpoint for any seat that does not pin one
 type = "eval"
-base_url = "https://openrouter.ai/api/v1"
-api_key_var = "OPENROUTER_API_KEY"
+base_url = "http://localhost:8000/v1"
+api_key_var = "VLLM_API_KEY"   # unset means "EMPTY", which a server without --api-key accepts
 
 [sampling]
-max_tokens = 256
+temperature = 0           # evaluation never samples
+max_tokens = 512
 
 [env]
-rounds = 3
+game = "copycat_rps"
+
+[env.game_config]         # every setting but the seed, which each task supplies
+rounds = 4
 
 [env.taskset]
-id = "self-play-env"
-
-# seat0 uses the top-level model; seat1 pins a different one to check per-seat models
-# and that a pinned seat is marked untrainable.
-[env.seat1]
-model = "meta-llama/llama-3.1-8b-instruct"
+id = "self-play-verifiers"

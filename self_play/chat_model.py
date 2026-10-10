@@ -1,8 +1,8 @@
 """The one model interface the engine talks to.
 
 Games and players only ever call `ChatModel.complete`. Real runs back it with a verifiers
-interaction (`self_play_env.chat_model.InteractionChatModel`); unit tests use
-`ScriptedChatModel`. This module must not import verifiers.
+interaction (`InteractionChatModel`); unit tests use `ScriptedChatModel`. This module must
+not import verifiers: `InteractionChatModel` only calls `.turn()` on what it is given.
 """
 
 from abc import ABC, abstractmethod
@@ -21,6 +21,29 @@ class ChatModel(ABC):
     async def complete(self, *, messages: list[dict]) -> str:
         """Reply to `messages`, which are the whole context for this call (the chat never
         grows between calls). Returns the raw reply text."""
+
+
+class ModelCallFailed(RuntimeError):
+    """A model call did not produce a reply. Never papered over: the game stops here."""
+
+
+class InteractionChatModel(ChatModel):
+    """A `ChatModel` backed by one seat's verifiers interaction.
+
+    Each `complete` is one `interaction.turn`; with `StatelessHarness` the messages sent are
+    the call's whole context. If the seat's run ended instead of replying (a token or turn
+    limit, a timeout), the call raises `ModelCallFailed`, which fails the episode; with
+    checkpointing on, a resumed run continues the game from before this call.
+    """
+
+    def __init__(self, *, interaction):
+        self._interaction = interaction
+
+    async def complete(self, *, messages: list[dict]) -> str:
+        segment = await self._interaction.turn(messages)
+        if segment.terminated:
+            raise ModelCallFailed("the seat's run ended (a limit, a timeout) instead of replying")
+        return segment.last_reply
 
 
 class ScriptedChatModel(ChatModel):

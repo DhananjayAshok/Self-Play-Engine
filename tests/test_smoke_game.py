@@ -1,7 +1,7 @@
 import asyncio
 
 from self_play.chat_model import ScriptedChatModel, strip_stop
-from self_play_env.smoke_game import FALLBACK, parse_choice, play_smoke_game
+from self_play.smoke_game import FALLBACK, parse_choice, play_smoke_game
 
 
 def test_strip_stop_cuts_at_marker():

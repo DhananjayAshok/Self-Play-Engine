@@ -1,5 +1,5 @@
 # Smoke test for the verifiers path: a local vLLM model plays copycat rock paper scissors.
-# Four rounds cover every dialogue mode, talk and thinking turns. From the repo root, with
+# Ten rounds cycle the four dialogue modes, with talk and thinking turns. From the repo root, with
 # the vLLM server up (VLLM_API_KEY exported if the server was started with --api-key):
 #   bash scripts/eval.sh --config eval_configs/smoke.toml --name smoke-001
 #   bash scripts/eval.sh --config eval_configs/smoke.toml --name smoke-001 --base_url http://<node>:8000/v1
@@ -18,13 +18,13 @@ api_key_var = "VLLM_API_KEY"   # unset means "EMPTY", which a server without --a
 
 [sampling]
 temperature = 0           # evaluation never samples
-max_tokens = 512
+max_tokens = 2048
 
 [env]
 game = "copycat_rps"
 
 [env.game_config]         # every setting but the seed, which each task supplies
-rounds = 4
+rounds = 10
 
 [env.taskset]
 id = "self-play-verifiers"

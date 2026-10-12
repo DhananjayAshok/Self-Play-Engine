@@ -1,6 +1,7 @@
-# Installed (editable) into prime-rl's environment, which is the only environment for
-# this project: `cd prime-rl && uv sync --all-extras`. Do not run uv sync/run from the
-# repo root; add dependencies with `uv add --frozen <pkg>` here, then `uv lock` in prime-rl.
+# Installed (editable) into prime-rl's environment, which is the project environment
+# (llm-utils has its own, separate one): `cd prime-rl && uv sync --all-extras`. Do not run
+# uv sync/run from the repo root; add dependencies with `uv add --frozen <pkg>` here, then
+# `uv lock` in prime-rl.
 # Versions are left unpinned so prime-rl's lock decides them.
 [project]
 name = "self-play-engine"

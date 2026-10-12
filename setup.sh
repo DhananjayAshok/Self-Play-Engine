@@ -1,5 +1,6 @@
 #!/bin/bash
-# Set up a fresh clone: fetch the submodules prime-rl's environment needs, then build it.
+# Set up a fresh clone: fetch the submodules the project environment needs, then build it.
+# This builds the project environment only; the llm-utils environment is separate (README.md).
 #
 # Usage: bash setup.sh
 # uv builds the environment at prime-rl/.venv; symlink that elsewhere first if wanted.

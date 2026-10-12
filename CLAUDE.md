@@ -12,9 +12,13 @@ This file provides guidance for AI assistants working on projects derived from t
 
 ## Environment Setup
 
-This project uses `uv` for dependency management, with a single environment: prime-rl's (`prime-rl/.venv`, Linux only). The root `pyproject.toml` declares this project's dependencies and is installed into that environment as an editable path dependency of the `prime-rl` submodule. It has no entry points and exposes only `self_play` (the engine, which never imports verifiers), `self_play_verifiers` (the verifiers env, taskset and harness) and `project_utils`.
+This project uses `uv` for dependency management, with two environments:
+- **The project environment**: prime-rl's (`prime-rl/.venv`, Linux only). All project code, tests and scripts run in it. The root `pyproject.toml` declares this project's dependencies and is installed into it as an editable path dependency of the `prime-rl` submodule. It has no entry points and exposes only `self_play` (the engine, which never imports verifiers), `self_play_verifiers` (the verifiers env, taskset and harness) and `project_utils`.
+- **The llm-utils environment**: `llm-utils/setup/.venv`, used only for the `llm-utils` submodule, through `scripts/llm-utils.sh` (which switches into it for one command and back). Never install project dependencies there.
 
-Create or update the environment with (from root):
+See README.md for the full setup.
+
+Create or update the project environment with (from root):
 ```
 cd prime-rl
 uv sync --all-extras
@@ -25,7 +29,7 @@ Whenever you start work, you must activate (always from project root):
 ```bash
 source prime-rl/.venv/bin/activate
 ```
-Especially if you are going to consider uv pip installing anything, you must only do it in this environment. Never run `uv sync` or `uv run` from the repo root; that would create a second environment there.
+Especially if you are going to consider uv pip installing anything, you must only do it in this (the project) environment. Never run `uv sync` or `uv run` from the repo root; that would create a third environment there.
 
 If you want to make a package dependency official, add it to the root `pyproject.toml` without locking, then relock and commit inside prime-rl (from root):
 ```

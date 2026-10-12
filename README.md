@@ -1,76 +1,96 @@
-# Project Starter
+# Self-Play-Engine
 
-A template for Python research projects. Provides standardised environment setup, config-driven parameter management, structured logging, large file sync via HuggingFace, and artifact tracking.
+Multi-agent LLM self-play in strategic social games: train with prime-rl, evaluate with the same code. This README covers setup only.
 
----
+## Two environments
 
-## Checklist
+| Environment | Where | What runs in it |
+|---|---|---|
+| **Project environment** | `prime-rl/.venv` (built by prime-rl) | All project code, tests and scripts: `self_play`, `self_play_verifiers`, `project_utils`, verifiers, prime-rl, `scripts/eval.sh`. |
+| **llm-utils environment** | `llm-utils/setup/.venv` | Only [llm-utils](https://github.com/DhananjayAshok/llm-utils/), the batched offline inference toolkit, run through `scripts/llm-utils.sh`. |
 
-1. Create the environment (see Reproduction)
-2. Checkout llm-utils to the latest commit
-3. Create symlink with llm-utils/setup/.venv and wherever your actual env is
-4. Add all and commit
+The project environment is the one you work in, and the only one you activate yourself. `scripts/llm-utils.sh` switches into the llm-utils environment for one command and back again.
 
+The project code is not a separate install. The root `pyproject.toml` is installed into the project environment as an editable dependency of the `prime-rl` submodule, so editing `self_play/` takes effect immediately.
 
+## Requirements
 
-## Reproduction
+- **Linux.** The project environment does not work on Windows: verifiers imports `fcntl`, which only exists on Unix. Run the setup on the machine where the code will run.
+- [uv](https://docs.astral.sh/uv/getting-started/installation/). It fetches Python 3.12 itself.
+- git, and network access to GitHub.
 
-This project uses Python 3.12 with [uv](https://docs.astral.sh/uv/) for dependency management. There is one environment, prime-rl's (`prime-rl/.venv`, Linux only). The root `pyproject.toml` is installed into it as an editable dependency of the `prime-rl` submodule.
+## Setup
 
-Quick start (from project root):
+All commands run from the project root.
+
+### 1. Clone
+
 ```bash
-
-git clone <url>
-cd <project_name>
-git submodule update --init prime-rl llm-utils
-cd prime-rl
-# Only if this machine has no GitHub SSH key (prime-rl's nested submodules use git@ URLs):
-# git config --global url."https://github.com/".insteadOf git@github.com:
-git submodule update --init -- deps/verifiers deps/renderers deps/prime-envs deps/pydantic-config
-uv sync --all-extras
-cd ..
-cd llm-utils/setup && uv sync
-cd ../../
-source prime-rl/.venv/bin/activate
+git clone https://github.com/DhananjayAshok/Self-Play-Engine.git
+cd Self-Play-Engine
 ```
 
-Then fill in your local values in `configs/private_vars.yaml` (replacing any `PLACEHOLDER` entries) and generate the shell config:
+### 2. Build the project environment
+
 ```bash
+bash setup.sh
+```
+
+This fetches the `prime-rl` submodule and the four dependencies prime-rl needs (`verifiers`, `renderers`, `prime-envs`, `pydantic-config`), then runs `uv sync --all-extras` inside `prime-rl/`. It rewrites GitHub SSH URLs to HTTPS for that one command, so no SSH key is needed and your git config is not changed. It takes a while the first time.
+
+Check it:
+
+```bash
+source prime-rl/.venv/bin/activate
+python -c "import self_play, self_play_verifiers, project_utils; print('project environment ok')"
+```
+
+If your home directory has a small quota, make the environment live elsewhere before the build: create the target folder on larger storage and symlink `prime-rl/.venv` to it, then run `bash setup.sh`.
+
+### 3. Build the llm-utils environment
+
+Only needed if you will run llm-utils (batched local inference). Skip it otherwise.
+
+```bash
+git submodule update --init llm-utils
+cd llm-utils/setup
+uv sync
+cd ../..
+```
+
+The environment lands in `llm-utils/setup/.venv`, which is where `scripts/llm-utils.sh` looks for it. To keep it on other storage, symlink `llm-utils/setup/.venv` there before `uv sync`.
+
+### 4. Fill in the config
+
+Edit `configs/private_vars.yaml` and replace every `PLACEHOLDER`. `storage_dir` is mandatory: it must be an absolute path, and runs, models and data are written under it. The HuggingFace entries are only used by `sync_data.py`. See [configs/README.md](configs/README.md) for the other variables.
+
+Then, with the project environment active, generate the shell config that the scripts read:
+
+```bash
+source prime-rl/.venv/bin/activate
 python configs/create_env_file.py
 ```
 
-- Maybe a line on pulling data
+Rerun it whenever a YAML file in `configs/` changes.
 
----
+### 5. Check everything works
 
-## Config Files
+With the project environment active:
 
-All `.yaml` files in [`configs/`](configs/) are automatically merged into the `parameters` dict used throughout the codebase. See [`configs/README.md`](configs/README.md) for what each variable does and how to add new ones.
-
-- `private_vars.yaml` — machine-specific paths and credentials. Never shared as-is.
-- `project_vars.yaml` — project-level settings (seeds, result paths, etc.)
-
----
-
-## Core Utilities
-
-| Function / Class | Description | Example |
-| - | - | - |
-| `load_parameters` | Loads and merges all YAML configs into a single dict. Safe to call with an existing dict — returns it immediately if already loaded. | `parameters = load_parameters(parameters)` |
-| `log_info`, `log_warn`, `log_error`, `log_dict` | Structured logging. Always pass `parameters` to write to the log file in addition to console. `log_error` terminates execution. | `log_info("Done", parameters=parameters)` |
-| `write_meta` | Saves a hyperparameter dict to a YAML file, named by a content hash. Use this whenever you produce an artifact that has configuration you want to track. | `meta_hash = write_meta("results/run/", args, parameters)` |
-| `add_meta_details` | Returns a copy of a meta dict with additional fields merged in. | `extended = add_meta_details(args, {"epoch": 5})` |
-| `sync_data.py` | Syncs the local `sync_dir` with a HuggingFace Dataset repo. Use for sharing large files (models, datasets) across machines. | `python sync_data.py pull` / `push` / `init` |
-| `paired_bootstrap` | Statistical significance test comparing two systems via paired bootstrap resampling. Returns the achieved p-value. Optionally logs win ratios and 95% confidence intervals. | `p = paired_bootstrap(sys1_scores, sys2_scores, verbose=True, parameters=parameters)` |
-| `llm-utils` (submodule) | Efficient, scalable, offline, batched LLM/VLM inference via HuggingFace Transformers and vLLM. Also supports pretraining, SFT, DPO, and unlearning. Entry point: [`llm-utils/infer.py`](llm-utils/infer.py). Called via [`scripts/llm-utils.sh`](scripts/llm-utils.sh). | `bash scripts/llm-utils.sh --input data.csv --model_name <name> hf --batch_size 8` |
-
----
-
-## Running Code
-
-Python entry points follow the click pattern. See [`main.py`](main.py) for the template:
 ```bash
-python main.py [--global_option value] subcommand [--subcommand_option value]
+pytest tests/
 ```
 
-For bash scripts, see [BASH_TEMPLATE.md](BASH_TEMPLATE.md).
+## Using the environments
+
+- **Day to day:** `source prime-rl/.venv/bin/activate` at the start of every shell, from the project root. The scripts in `scripts/` activate it themselves.
+- **Never run `uv sync` or `uv run` from the project root.** That would create a third environment there. Only run them inside `prime-rl/` or `llm-utils/setup/`.
+- **After changing the package list** in the root `pyproject.toml` (adding or renaming a package), update the project environment: `cd prime-rl && uv sync --all-extras && cd ..`.
+- **After changing dependencies** in the root `pyproject.toml`, relock inside prime-rl before syncing: `cd prime-rl && uv lock && uv sync --all-extras && cd ..`.
+
+## API keys
+
+Keys are read from environment variables, never from files in the repo:
+
+- `OPENROUTER_API_KEY` for OpenRouter models.
+- `VLLM_API_KEY` for a vLLM server started with `--api-key`. If it is unset, requests are sent with the key `EMPTY`, which a server without `--api-key` accepts.

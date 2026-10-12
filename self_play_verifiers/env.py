@@ -1,6 +1,6 @@
 from contextlib import AsyncExitStack
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field
 
@@ -8,6 +8,7 @@ import verifiers.v1 as vf
 
 from self_play.chat_model import STOP_STRING, InteractionChatModel
 from self_play.checkpoint import checkpoint_path
+from self_play.game import THINK
 from self_play.games import GAMES
 from self_play.runner import Runner
 
@@ -39,6 +40,21 @@ class SelfPlayEnvConfig(vf.EnvConfig):
     """Every game setting except the seed, which each task supplies."""
     max_retries: int = Field(0, ge=0)
     """Retries for an unreadable or illegal answer before the fallback action."""
+    forfeit_on_invalid: bool = False
+    """Training reward only: a seat with any invalid answer (a fallback move or an unanswered
+    thinking turn) scores `invalid_move_reward` instead of its reward. Without it, RL can learn
+    never to answer: in copycat RPS the fallback (always the first legal move) draws every round
+    after the first, which beats the base model's sampled play. The game's own outcome is
+    unchanged; evals leave this off."""
+    invalid_move_reward: float = -1.0
+    """The training reward of a forfeited seat (see `forfeit_on_invalid`). Below every game
+    reward, so an invalid answer always ranks worst within its group."""
+    reward_mode: Literal["game", "moves"] = "game"
+    """Training reward only, recorded under this name. "game": the game's outcome reward.
+    "moves": the mean step reward over the seat's own non-thinking steps (in copycat RPS, the
+    mean round result: 1 win, 0.5 draw, 0 loss), a denser signal that credits every round, not
+    just who won more. Games without their own step rewards give every step the outcome, so
+    there "moves" equals "game". The forfeit still applies on top."""
     checkpoint_dir: str | None = None
     """Mid-game checkpoints (eval only; set by scripts/eval.sh). Needs one rollout per task."""
 
@@ -97,7 +113,21 @@ class SelfPlayEnv(vf.Env[SelfPlayEnvConfig]):
         calls = [entry for entry in runner.record if entry["kind"] == "call"]
         for player_id, interaction in interactions.items():
             trace = interaction.trace
-            trace.record_reward("game", result["outcome"]["rewards"][player_id])
+            outcome_reward = result["outcome"]["rewards"][player_id]
+            reward = outcome_reward
+            if self.config.reward_mode == "moves":
+                move_rewards = [
+                    step_reward
+                    for step, step_reward in zip(runner.game.steps, result["step_rewards"], strict=True)
+                    if step["player_id"] == player_id and step["action"] != THINK
+                ]
+                reward = sum(move_rewards) / len(move_rewards) if move_rewards else 0.0
+            if self.config.forfeit_on_invalid and result["invalid"][player_id] > 0:
+                reward = self.config.invalid_move_reward
+            # The training reward is named after its mode; the game's own outcome (never
+            # forfeited) is a metric in every mode, so runs of either mode compare on it.
+            trace.record_reward(self.config.reward_mode, reward)
+            trace.record_metric("game_outcome", float(outcome_reward))
             trace.record_metric("invalid", float(result["invalid"][player_id]))
             # Every seat carries the whole game; step_rewards lists this player's calls in
             # call order with the step each led to and that step's reward.

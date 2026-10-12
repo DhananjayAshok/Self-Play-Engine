@@ -1,0 +1,6 @@
+# CLAUDE GENERATED 100%, DJ DOES NOT APPROVE, MUST BE REVISED
+# Sweep 0: base held-out evals (600 seeds, temp 1 and 0) + two 4-step smoke runs to check the
+# pipeline end to end (train, save adapters, eval) and measure time per step.
+base
+llama-s0-game rl_configs/llama3/copycat_llama3.toml --max-steps 4
+llama-s0-moves rl_configs/llama3/copycat_llama3_moves.toml --max-steps 4

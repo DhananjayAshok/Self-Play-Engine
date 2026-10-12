@@ -1,0 +1,66 @@
+# CLAUDE GENERATED 100%, DJ DOES NOT APPROVE, MUST BE REVISED
+# LoRA RL of Meta-Llama-3-8B-Instruct on 4-round copycat rock paper scissors, one A40 for
+# inference and one for training. Carries over what the Gemma runs (progress.md, runs 003-009)
+# showed is needed: the seat token cap (without it the game's calls are uncapped) and the
+# forfeit (without it RL learns to never answer and take the fallback move, which draws
+# against the copycat). Sweep knobs go on the command line (scripts/rl_run.sh --overrides).
+max_steps = 40
+seq_len = 4096
+
+[model]
+name = "meta-llama/Meta-Llama-3-8B-Instruct"
+
+[monitors.wandb]
+project = "Self-Play"
+
+[deployment]
+num_train_gpus = 1
+num_infer_gpus = 1
+
+[trainer.model.ac]
+freq = 1
+
+[trainer.model.lora]
+rank = 32
+alpha = 64
+target_modules = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+
+[trainer.optim]
+lr = 5e-5
+max_norm = 1.0
+
+[trainer.loss]
+type = "ipo"
+eps = 0.3
+
+[orchestrator]
+batch_size = 64
+
+# Llama-3 (not 3.2) is not in the renderer map, and the llama-3 renderer adds 3.2's date
+# preamble; "default" renders with the model's own chat template, as vLLM does for evals.
+[orchestrator.renderer]
+name = "default"
+
+[orchestrator.train]
+group_size = 8
+
+[orchestrator.model.lora]
+
+[orchestrator.train.sampling]
+max_completion_tokens = 1024
+
+[[orchestrator.train.source]]
+name = "copycat-rps"
+env.game = "copycat_rps"
+env.game_config.rounds = 4
+env.taskset.id = "self-play-verifiers"
+env.seat0.sampling.max_tokens = 1024
+env.forfeit_on_invalid = true
+env.reward_mode = "game"
+
+[inference]
+
+[inference.vllm]
+enable_lora = true
+max_lora_rank = 64
+gpu_memory_utilization = 0.85

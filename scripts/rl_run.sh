@@ -4,10 +4,12 @@
 # last 2) in $storage_dir/rl_runs/<name>/adapters/step_N/. Blocks until the run ends.
 #
 #   bash scripts/rl_run.sh --name llama-001 --config rl_configs/llama3/copycat_llama3.toml
-#   bash scripts/rl_run.sh --name llama-002 --config <cfg> --overrides "--trainer.optim.lr 1e-4" --port 8010
+#   bash scripts/rl_run.sh --name llama-002 --config <cfg> --overrides "--trainer.optim.lr 1e-4" --port 8200
 #
-# `port` is the run's vLLM port and `port + 50` its rollout transport (ZMQ) port: give each
-# run sharing a node its own block of 100. `overrides` are extra `rl` flags, one quoted string.
+# `port` is the run's vLLM port; the run also uses `port + 50` (rollout transport), `port + 100`
+# (router engine) and `port + 21000` (router metrics, bound by prime-rl). Give each run sharing
+# a node its own block of 200, base below 11700, so `port + 21000` stays under Linux's ephemeral
+# range (32768+); see README.md. `overrides` are extra `rl` flags, one quoted string.
 
 source scripts/utils.sh || { echo "Could not source utils"; exit 1; }
 

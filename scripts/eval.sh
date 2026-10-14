@@ -4,6 +4,7 @@
 #   bash scripts/eval.sh --config eval_configs/smoke.toml --name smoke-001
 #   bash scripts/eval.sh --config eval_configs/smoke.toml --name smoke-001 --base_url http://<node>:8000/v1
 #   bash scripts/eval.sh --name smoke-001 --resume true      # continue an interrupted run
+#   bash scripts/eval.sh --config <cfg> --name <run> --model <lora-name>   # a LoRA adapter served by vLLM
 #
 # The run lands in $storage_dir/eval_runs/<name>/ (vf-eval's traces.jsonl, configs/, logs/)
 # with mid-game checkpoints in its checkpoints/ folder. Checkpointing needs one rollout per
@@ -16,6 +17,8 @@ declare -A ARGS
 ARGS["config"]="none"
 ARGS["resume"]="false"
 ARGS["base_url"]="none"   # overrides the config's [client] base_url, e.g. a vLLM server on another node
+# --model (this line and its use below): CLAUDE GENERATED 100%, DJ DOES NOT APPROVE, MUST BE REVISED
+ARGS["model"]="none"      # overrides the config's model, e.g. a LoRA adapter's name on the vLLM server
 
 REQUIRED_ARGS=("name")
 
@@ -78,5 +81,7 @@ else
     if [[ "${ARGS["config"]}" == "none" ]]; then echo "Error: --config is required for a new run"; exit 1; fi
     base_url_args=()
     if [[ "${ARGS["base_url"]}" != "none" ]]; then base_url_args=(--client.base-url "${ARGS["base_url"]}"); fi
-    vf-eval @ "${ARGS["config"]}" -o "$runs_dir" --run.name "$name" --env.checkpoint-dir "$run_dir/checkpoints" -r 1 "${base_url_args[@]}"
+    model_args=()
+    if [[ "${ARGS["model"]}" != "none" ]]; then model_args=(--model "${ARGS["model"]}"); fi
+    vf-eval @ "${ARGS["config"]}" -o "$runs_dir" --run.name "$name" --env.checkpoint-dir "$run_dir/checkpoints" -r 1 "${base_url_args[@]}" "${model_args[@]}"
 fi

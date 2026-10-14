@@ -117,7 +117,10 @@ server_pid=""
 if [[ ${#todo[@]} -gt 0 ]]; then
     server_log="$eval_dir/$prefix-serve-${run}-$port.log"
     # FlashInfer's sampler JIT-compiles at warmup and needs nvcc; the torch sampler is fine.
-    CUDA_VISIBLE_DEVICES="${ARGS["gpu"]}" VLLM_USE_FLASHINFER_SAMPLER=0 vllm serve "${ARGS["model"]}" \
+    # setsid: vLLM's shutdown signals its whole process group, which would otherwise include
+    # this script (and the other eval script of the same job), killing them before the
+    # comparisons below are written.
+    CUDA_VISIBLE_DEVICES="${ARGS["gpu"]}" VLLM_USE_FLASHINFER_SAMPLER=0 setsid vllm serve "${ARGS["model"]}" \
         --host 127.0.0.1 --port "$port" --max-model-len 4096 --gpu-memory-utilization 0.9 \
         "${lora_args[@]}" > "$server_log" 2>&1 &
     server_pid=$!

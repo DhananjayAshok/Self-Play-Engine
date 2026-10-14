@@ -105,7 +105,7 @@ bash scripts/rl_run.sh --name llama-001 --config rl_configs/llama3/copycat_llama
 - **Extra prime-rl flags** go in `--overrides`, as one quoted string: `--overrides "--trainer.optim.lr 1e-4 --max-steps 20"`.
 - **Adapters:** every 2nd step's LoRA adapter is kept in `rl_runs/<name>/adapters/step_N/` (`--save_every` changes that).
 - **Logs:** the launcher log is `rl_runs/<name>.log`; trainer, orchestrator, vLLM and env logs are in `rl_runs/<name>/logs/`.
-- **Several runs on one node:** give each its own `--port` (the run uses `port` for vLLM and `port + 50` for the rollout transport), 100 apart.
+- **Several runs on one node:** give each its own `--port`, 200 apart, with every base port below 11700. A run uses `port` (vLLM), `port + 50` (rollout transport) and `port + 100` (router engine), and prime-rl's router also binds a metrics port at `port + 21000`. That one must stay below 32768: above 65535 the router crashes with an overflow, and in Linux's ephemeral range (32768+) other processes can already hold it ("address already in use"). `scripts/llama_sweep.sbatch` picks free ports this way automatically.
 
 The training reward is set by the `env.*` keys of the config's `[[orchestrator.train.source]]` block:
 

@@ -1,0 +1,29 @@
+# Light-model run: Qwen2.5-7B-Instruct plays copycat rock paper scissors, served by vLLM on one
+# GPU. The settings match smoke.toml except for the model. To play another registered game, copy
+# this file and change [env] game and [env.game_config]. From the repo root, with the vLLM server up:
+#   bash scripts/eval.sh --config eval_configs/qwen2.5-7b.toml --name qwen7b-001 --base_url http://<node>:8000/v1
+# The run lands in $storage_dir/eval_runs/<name>/ (traces.jsonl). See README "Run a light model on CARC".
+model = "Qwen/Qwen2.5-7B-Instruct"
+push = false              # the default uploads the run to the Prime Intellect platform
+max_concurrent = 2
+
+[select]
+limit = 2                 # the taskset is infinite, so the number of games must be set
+
+[client]                  # fallback endpoint for any seat that does not pin one
+type = "eval"
+base_url = "http://localhost:8000/v1"
+api_key_var = "VLLM_API_KEY"   # unset means "EMPTY", which a server without --api-key accepts
+
+[sampling]
+temperature = 0           # evaluation never samples
+max_tokens = 2048
+
+[env]
+game = "copycat_rps"
+
+[env.game_config]         # every setting but the seed, which each task supplies
+rounds = 10
+
+[env.taskset]
+id = "self-play-verifiers"

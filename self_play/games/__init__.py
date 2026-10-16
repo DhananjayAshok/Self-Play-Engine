@@ -2,5 +2,6 @@
 
 from self_play.game import Game
 from self_play.games.copycat_rps import CopycatRPSGame
+from self_play.games.coup import CoupGame
 
-GAMES: dict[str, type[Game]] = {game.name: game for game in (CopycatRPSGame,)}
+GAMES: dict[str, type[Game]] = {game.name: game for game in (CopycatRPSGame, CoupGame)}

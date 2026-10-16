@@ -133,9 +133,67 @@ def render_prompt(*, rules: str, observation: dict[str, Any]) -> str:
         parts.append(line)
     if observation["phase"] is not None:
         merchant = inspection["merchant"] if inspection else None
-        situation = PHASE_TEXT[observation["phase"]].format(deciding=", ".join(observation["deciding"]), merchant=merchant)
+        if acts_now(observation=observation):
+            situation = "Your decision now: " + decision_text(observation=observation)
+        else:
+            situation = PHASE_TEXT[observation["phase"]].format(deciding=", ".join(observation["deciding"]), merchant=merchant)
         parts.append(f"It is round {observation['round']} of {observation['rounds']}. {situation}")
     return "\n\n".join(parts)
+
+
+def acts_now(*, observation: dict[str, Any]) -> bool:
+    """Whether the reader is asked for an action now. In a negotiation the Sheriff only talks:
+    the merchant acts. (While bags are loaded, a merchant whose bag is closed is still listed
+    as deciding, but it is never asked, so its prompt is never built.)"""
+    you, phase = observation["you"], observation["phase"]
+    if phase == "negotiate":
+        return you == observation["inspection"]["merchant"]
+    return you in observation["deciding"]
+
+
+def decision_text(*, observation: dict[str, Any]) -> str:
+    """Exactly what the deciding player is choosing now, in words."""
+    phase, inspection = observation["phase"], observation["inspection"]
+    hand, bag, set_aside = observation["your_hand"], observation["your_bag"], observation["your_set_aside"]
+    gold = next(player["gold"] for player in observation["players"] if player["id"] == observation["you"])
+    if phase == "set_aside":
+        return (f"Set aside one more card from your hand, face down, or say done. You have set aside "
+                f"{len(set_aside)} of at most 5; you will then draw back to 6 cards.")
+    if phase == "draw":
+        return (f"Draw one card, from the top of a discard pile or from the draw pile; you have {len(hand)} of 6 "
+                f"cards. Once you draw from the draw pile, you cannot take from the discard piles.")
+    if phase == "discard_pile":
+        return f"Choose the discard pile your set-aside cards ({describe(cards=set_aside)}) go on, face up."
+    if phase == "discard_order":
+        return (f"Put one of your set-aside cards ({describe(cards=set_aside)}) on the discard pile. The last card "
+                f"you put there is its new top.")
+    if phase == "load":
+        if not bag:
+            return "Add one card from your hand to your bag. Your bag is empty, so you must add one."
+        return f"Add one card from your hand to your bag, or say done. Your bag holds {len(bag)} of at most 5 cards."
+    if phase == "declare":
+        cards = f"{len(bag)} card{'s' if len(bag) != 1 else ''}"
+        return (f"Declare one type of legal good for your bag of {cards} ({describe(cards=bag)}). The "
+                f"declaration may be false; the game states the number of cards.")
+    if phase == "pick_bag":
+        return f"You are the Sheriff. Choose the next bag to deal with: {', '.join(observation['unresolved'])}."
+    if phase == "negotiate":
+        return (f"Offer the Sheriff any amount of gold from 0 to {gold}. Next you may add goods from your stand "
+                f"or your bag to the offer.")
+    if phase == "offer_goods":
+        return "Add one more good from your stand or your bag to your offer, or say done. Cards in hand cannot be offered."
+    merchant = inspection["merchant"]
+    if phase == "decide":
+        return f"You are the Sheriff. Decide only whether to take {merchant}'s offer and let the bag pass, or inspect the bag."
+    confiscated = describe(cards=inspection["confiscated"])
+    if phase == "confiscate_pile":
+        return f"You are the Sheriff. Choose the discard pile the confiscated goods ({confiscated}) go on."
+    if phase == "confiscate_order":
+        return (f"You are the Sheriff. Put one of the confiscated goods ({confiscated}) on the discard pile. "
+                f"The last card you put there is its new top.")
+    debt = inspection["debt"]
+    return (f"You owe {debt['payee']} {debt['remaining']} more gold and have no gold left. Give one good from your "
+            f"stand: legal goods while you have any, then contraband. Each counts at its value, and no change is given.")
 
 
 def answer_request(*, legal_actions: list[Any]) -> str:

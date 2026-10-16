@@ -10,6 +10,7 @@ from self_play.game import THINK, DialogueMode
 from self_play.games import GAMES
 from self_play.games.sheriff import SheriffGame
 from self_play.games.sheriff.game import COUNTS, HAND_SIZE, SHERIFF_TURNS, START_GOLD, sort_goods
+from self_play.games.sheriff.prompts import describe
 from self_play.prompting import TALK_INSTRUCTION, THINK_INSTRUCTION
 from self_play.runner import Runner
 
@@ -782,3 +783,75 @@ def test_a_three_player_game_through_the_runner_asks_only_real_choices():
         calls = [(e["player_id"], e["call"]) for e in runner.record if e["kind"] == "call" and e["phase_id"] == phase_id]
         assert calls == [(merchant, "talk"), (sheriff, "talk")] * 2 + [(merchant, "answer")]  # the Sheriff never acts here
     assert len(result["step_rewards"]) == len(game.steps)
+
+
+# --- what the deciding player is told ---------------------------------------------------
+
+
+def prompt_of(*, game, player_id):
+    return game.render_observation(observation=game.get_observation(player_id=player_id))
+
+
+def decision_lines(*, game):
+    """Each player's "Your decision now" sentence, or None."""
+    out = {}
+    for pid in game.player_ids:
+        lines = [line for line in prompt_of(game=game, player_id=pid).splitlines() if "Your decision now: " in line]
+        out[pid] = lines[0].split("Your decision now: ", 1)[1] if lines else None
+    return out
+
+
+def test_the_deciding_players_prompt_says_exactly_what_it_is_choosing_now():
+    game = table(hands={"p2": ["apples", "apples", "cheese", "cheese", "pepper", "mead"]})
+    assert decision_lines(game=game) == {"p1": None, "p3": None, "p2": (
+        "Set aside one more card from your hand, face down, or say done. You have set aside 0 of at most 5; "
+        "you will then draw back to 6 cards.")}
+    assert "p2 is choosing cards to set aside in the Market." in prompt_of(game=game, player_id="p3")
+    act(game=game, moves=[("p2", {"set_aside": "pepper"}), ("p2", {"set_aside": "mead"}), ("p2", "done")])
+    assert decision_lines(game=game)["p2"] == (
+        "Draw one card, from the top of a discard pile or from the draw pile; you have 4 of 6 cards. Once you draw "
+        "from the draw pile, you cannot take from the discard piles.")
+    act(game=game, moves=[("p2", {"draw": "deck"})] * 2)
+    assert decision_lines(game=game)["p2"] == "Choose the discard pile your set-aside cards (1 Pepper, 1 Mead) go on, face up."
+    act(game=game, moves=[("p2", {"pile": 1})])
+    assert decision_lines(game=game)["p2"] == (
+        "Put one of your set-aside cards (1 Pepper, 1 Mead) on the discard pile. The last card you put there is its new top.")
+    act(game=game, moves=[("p2", {"place": "mead"})])
+    skip_market(game=game)
+    lines = decision_lines(game=game)
+    assert lines["p1"] is None  # the Sheriff loads nothing
+    assert lines["p2"] == lines["p3"] == "Add one card from your hand to your bag. Your bag is empty, so you must add one."
+    act(game=game, moves=[("p2", {"load": game.state["hands"]["p2"][0]}), ("p3", {"load": game.state["hands"]["p3"][0]})])
+    assert decision_lines(game=game)["p2"] == "Add one card from your hand to your bag, or say done. Your bag holds 1 of at most 5 cards."
+    act(game=game, moves=[("p2", "done"), ("p3", "done")])
+    bag = describe(cards=game.state["bags"]["p2"])
+    assert decision_lines(game=game) == {"p1": None, "p3": None, "p2": (
+        f"Declare one type of legal good for your bag of 1 card ({bag}). The declaration may be false; the game "
+        "states the number of cards.")}
+
+
+def test_the_sheriffs_and_the_merchants_decisions_in_an_inspection_are_spelled_out():
+    game = four_bags()
+    assert decision_lines(game=game) == {"p1": "You are the Sheriff. Choose the next bag to deal with: p2, p3, p4.",
+                                         "p2": None, "p3": None, "p4": None}
+    act(game=game, moves=[("p1", {"bag": "p4"})])
+    assert decision_lines(game=game) == {"p1": None, "p2": None, "p3": None, "p4": (
+        "Offer the Sheriff any amount of gold from 0 to 50. Next you may add goods from your stand or your bag to the offer.")}
+    assert "p4 and the Sheriff are negotiating over p4's bag; then p4 offers gold." in prompt_of(game=game, player_id="p1")
+    act(game=game, moves=[("p4", {"gold": 2})])
+    assert decision_lines(game=game)["p4"] == (
+        "Add one more good from your stand or your bag to your offer, or say done. Cards in hand cannot be offered.")
+    act(game=game, moves=[("p4", "done")])
+    assert decision_lines(game=game) == {"p2": None, "p3": None, "p4": None, "p1": (
+        "You are the Sheriff. Decide only whether to take p4's offer and let the bag pass, or inspect the bag.")}
+    act(game=game, moves=[("p1", "inspect")])
+    assert decision_lines(game=game)["p1"] == "You are the Sheriff. Choose the discard pile the confiscated goods (2 Pepper) go on."
+    game = lying_bag(bag=["cheese", "silk", "mead"], declared="apples")
+    act(game=game, moves=[("p1", {"pile": 1})])
+    assert decision_lines(game=game) == {"p2": None, "p3": None, "p1": (
+        "You are the Sheriff. Put one of the confiscated goods (1 Cheese, 1 Mead, 1 Silk) on the discard pile. "
+        "The last card you put there is its new top.")}
+    game = lying_bag(bag=["silk"], declared="apples", gold=1, legal=["apples"])
+    assert decision_lines(game=game) == {"p1": None, "p3": None, "p2": (
+        "You owe p1 3 more gold and have no gold left. Give one good from your stand: legal goods while you have "
+        "any, then contraband. Each counts at its value, and no change is given.")}

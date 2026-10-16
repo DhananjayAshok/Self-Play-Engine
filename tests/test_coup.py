@@ -12,8 +12,8 @@ from self_play.games.coup.game import CARDS, COPIES
 from self_play.runner import Runner
 
 
-def new_game(*, seed=0, **settings):
-    return CoupGame(game_config={"seed": seed, "players": 2, **settings})
+def new_game(*, seed=0, players=2, **settings):
+    return CoupGame(game_config={"seed": seed, "players": players, **settings})
 
 
 def think_all(*, game):
@@ -63,10 +63,39 @@ def test_setup_two_cards_each_fifteen_in_all_and_the_starter_gets_one_coin():
         assert state["coins"] == {starter: 1, other: 2}
 
 
-def test_only_two_players_for_now():
-    for players in (1, 3, 6):
+def test_two_to_six_players_start_with_two_coins_each():
+    for players in range(3, 7):
+        for seed in range(10):
+            game = new_game(seed=seed, players=players)
+            assert game.player_ids == [f"p{i}" for i in range(1, players + 1)]
+            assert game.state["coins"] == {pid: 2 for pid in game.player_ids}  # the 1-coin rule is 2 players only
+            assert all(len(game.state["hands"][pid]) == 2 for pid in game.player_ids)
+            assert all_cards(game=game) == Counter({card: COPIES for card in CARDS})
+    for players in (0, 1, 7, "3"):
         with pytest.raises(ValueError):
             new_game(players=players)
+
+
+def test_a_six_player_game_deals_twelve_cards_and_leaves_three():
+    game = new_game(players=6)
+    assert sum(len(hand) for hand in game.state["hands"].values()) == 12
+    assert len(game.state["deck"]) == 3
+    assert game.get_observation(player_id="p1")["deck_size"] == 3
+
+
+def test_the_starting_player_comes_from_the_seed_for_every_player_count():
+    for players in range(2, 7):
+        starters = {new_game(seed=seed, players=players).state["actor"] for seed in range(60)}
+        assert starters == {f"p{i}" for i in range(1, players + 1)}
+
+
+def test_settings_are_checked():
+    for settings in ({"thinking": "some"}, {"window_talk_rounds": -1}, {"window_talk_rounds": 1.5},
+                     {"talk_rounds": -1}, {"max_turns": 0}, {"window_talk_rounds": True}):
+        with pytest.raises(ValueError):
+            new_game(**settings)
+    for settings in ({"thinking": "actor"}, {"thinking": "all"}, {"window_talk_rounds": 0}, {"window_talk_rounds": 2}):
+        new_game(**settings)  # accepted
 
 
 # --- legal actions ----------------------------------------------------------------------
@@ -162,22 +191,67 @@ def test_the_loser_chooses_the_card_and_elimination_ends_the_game():
     assert game.state["coins"][other] == 0  # coins return to the Treasury
     assert game.get_outcome() == {"done": True, "rewards": {actor: 1.0, other: 0.0}, "winner": actor,
                                   "termination_reason": "last_player_standing"}
-    assert all_cards(game=game) == Counter({card: COPIES for card in CARDS})
     assert len(game.get_step_rewards()) == len(game.steps)
 
 
 def test_rule_based_games_from_the_seed_always_end_with_one_winner():
-    for seed in range(30):
-        game = new_game(seed=seed)
-        while game.get_dialogue_phase() is not None:
-            player_id = deciding(game=game)
-            legal = game.get_legal_actions(player_id=player_id)
-            coups = [action for action in legal if action.get("action") == "coup"]
-            assert game.step(player_id=player_id, action=coups[0] if coups else legal[0]).accepted
-        outcome = game.get_outcome()
-        assert outcome["done"] and outcome["termination_reason"] == "last_player_standing"
-        assert sorted(outcome["rewards"].values()) == [0.0, 1.0]
-        assert all(coins >= 0 for coins in game.state["coins"].values())
+    """Coup the first listed target whenever possible, else take Foreign Aid; reveal the first
+    card. The turn limit is raised so that only elimination can end these games."""
+    for players in range(2, 7):
+        for seed in range(20):
+            game = new_game(seed=seed, players=players, max_turns=1000)
+            while game.get_dialogue_phase() is not None:
+                player_id = deciding(game=game)
+                assert game.alive(player_id=player_id)  # the eliminated never act
+                legal = game.get_legal_actions(player_id=player_id)
+                coups = [action for action in legal if action.get("action") == "coup"]
+                assert all(game.alive(player_id=c["target"]) and c["target"] != player_id for c in coups)
+                choice = coups[0] if coups else legal[1] if legal[0] == {"action": "income"} else legal[0]
+                assert game.step(player_id=player_id, action=choice).accepted
+            outcome = game.get_outcome()
+            assert outcome["done"] and outcome["termination_reason"] == "last_player_standing"
+            assert sorted(outcome["rewards"].values()) == [0.0] * (players - 1) + [1.0]
+            assert all(coins >= 0 for coins in game.state["coins"].values())
+            assert all_cards(game=game) == Counter({card: COPIES for card in CARDS})
+
+
+def test_turns_go_clockwise_from_the_starter_and_skip_the_eliminated():
+    game = new_game(players=4)
+    game.state["actor"] = "p3"
+    order = []
+    for _ in range(4):
+        player_id = deciding(game=game)
+        order.append(player_id)
+        assert game.step(player_id=player_id, action={"action": "income"}).accepted
+    assert order == ["p3", "p4", "p1", "p2"]
+    game.state["hands"]["p4"] = ["duke"]
+    game.state["coins"]["p3"] = 7
+    assert deciding(game=game) == "p3"
+    assert game.step(player_id="p3", action={"action": "coup", "target": "p4"}).accepted
+    assert game.step(player_id="p4", action={"reveal": "duke"}).accepted  # p4's last card
+    assert not game.alive(player_id="p4") and game.state["coins"]["p4"] == 0
+    assert deciding(game=game) == "p1"  # p4 is skipped
+    game.state["coins"]["p1"] = 7
+    coups = [a for a in game.get_legal_actions(player_id="p1") if a["action"] == "coup"]
+    assert coups == [{"action": "coup", "target": "p2"}, {"action": "coup", "target": "p3"}]  # never p4
+
+
+# --- thinking ---------------------------------------------------------------------------
+
+
+def test_thinking_actor_asks_only_the_next_actor_and_all_asks_every_living_player():
+    for thinking, expected in [("actor", ("p2",)), ("all", ("p1", "p2", "p4"))]:
+        game = new_game(players=4, thinking=thinking)
+        game.state["actor"] = "p1"
+        game.state["hands"]["p3"] = ["duke"]
+        game.state["coins"]["p1"] = 7
+        phase = game.get_dialogue_phase()
+        assert phase.mode is DialogueMode.THINKING and phase.eligible == ("p1", "p2", "p3", "p4")  # the opening
+        think_all(game=game)
+        assert game.step(player_id="p1", action={"action": "coup", "target": "p3"}).accepted
+        assert game.step(player_id="p3", action={"reveal": "duke"}).accepted  # p3 is out
+        phase = game.get_dialogue_phase()
+        assert phase.mode is DialogueMode.THINKING and phase.eligible == expected
 
 
 def test_the_turn_limit_ends_the_game_without_a_winner():
@@ -292,3 +366,71 @@ def test_a_scripted_two_player_game_ends_with_one_winner():
     assert all(not model._replies for model in models.values())  # every scripted reply was used
     assert game.state["revealed"]["p2"] == ["duke", "captain"]
     assert len(result["step_rewards"]) == len(game.steps)
+
+
+def coup_reply(*, target):
+    return reply(answer=json.dumps({"action": "coup", "target": target}))
+
+
+def run_scripted(*, game, replies):
+    models = {pid: ScriptedChatModel(replies=replies[pid]) for pid in game.player_ids}
+    runner = Runner(game=game, models=models)
+    result = asyncio.run(runner.run())
+    assert all(not model._replies for model in models.values())  # every scripted reply was used
+    assert result["invalid"] == {pid: 0 for pid in game.player_ids}
+    return result, runner, models
+
+
+def calls_after_elimination(*, runner, player_id):
+    """Model calls made to the player after the step in which it revealed its last card."""
+    out_at = max(i for i, e in enumerate(runner.record) if e["kind"] == "action" and e["player_id"] == player_id)
+    return [e for e in runner.record[out_at:] if e["kind"] == "call" and e["player_id"] == player_id]
+
+
+def test_a_scripted_three_player_game_ends_with_one_winner_and_the_eliminated_are_never_asked():
+    """p1 coups p3 (asked: two targets); p3 reveals Duke; p2 coups p3, whose last card is forced;
+    then p2 and p1 alternate (p3 skipped) until p1's second chosen Coup removes p2."""
+    game = new_game(players=3, talk_rounds=0)
+    game.state["actor"] = "p1"
+    game.state["coins"] = {"p1": 21, "p2": 7, "p3": 0}
+    game.state["hands"] |= {"p2": ["contessa", "assassin"], "p3": ["duke", "captain"]}
+    think = reply(answer="plan")
+    replies = {
+        # opening think; T1 coup p3; T3 think (its coup is forced: 14 coins, one target); T5 think, coup p2
+        "p1": [think, coup_reply(target="p3"), think, think, coup_reply(target="p2")],
+        # opening think; T2 think, coup p3; T3 reveal Contessa; T4 think, Income
+        "p2": [think, think, coup_reply(target="p3"), reply(answer='{"reveal": "contessa"}'), think,
+               reply(answer='{"action": "income"}')],
+        # opening think; T1 reveal Duke; T2 its last card is forced; never asked again
+        "p3": [think, reply(answer='{"reveal": "duke"}')],
+    }
+    result, runner, models = run_scripted(game=game, replies=replies)
+    assert result["outcome"]["winner"] == "p1"
+    assert result["outcome"]["rewards"] == {"p1": 1.0, "p2": 0.0, "p3": 0.0}
+    assert len(models["p3"].calls) == 2
+    for loser in ("p2", "p3"):
+        assert calls_after_elimination(runner=runner, player_id=loser) == []
+    actors = [step["player_id"] for step in game.steps if isinstance(step["action"], dict) and "action" in step["action"]]
+    assert actors == ["p1", "p2", "p1", "p2", "p1"]
+
+
+def test_a_scripted_six_player_game_ends_with_one_winner_and_the_eliminated_are_never_asked():
+    """Everyone holds one card. p1 (100 coins) coups p2, p3, ... in turn; each other living
+    player takes Income on its turn until it is removed. The last Coup has one target: forced."""
+    game = new_game(players=6, talk_rounds=0)
+    game.state["actor"] = "p1"
+    game.state["coins"] = {pid: 100 if pid == "p1" else 0 for pid in game.player_ids}
+    game.state["hands"] = {pid: ["duke"] for pid in game.player_ids}
+    think, income = reply(answer="plan"), reply(answer='{"action": "income"}')
+    replies = {"p1": [think]}
+    for k in range(2, 6):  # rounds 1-4: p1 thinks (not before round 1) and chooses its Coup
+        replies["p1"] += ([think] if k > 2 else []) + [coup_reply(target=f"p{k}")]
+    replies["p1"] += [think]  # round 5: think, then the forced Coup on p6
+    for k in range(2, 7):  # p_k plays rounds 1 .. k-2 and is removed in round k-1, before its turn
+        replies[f"p{k}"] = [think] + [think, income] * (k - 2)
+    result, runner, models = run_scripted(game=game, replies=replies)
+    assert result["outcome"]["winner"] == "p1"
+    assert result["outcome"]["rewards"] == {pid: 1.0 if pid == "p1" else 0.0 for pid in game.player_ids}
+    for k in range(2, 7):
+        assert calls_after_elimination(runner=runner, player_id=f"p{k}") == []
+        assert len(models[f"p{k}"].calls) == 1 + 2 * (k - 2)

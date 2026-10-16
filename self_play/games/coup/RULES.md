@@ -54,7 +54,9 @@ Two independent transcriptions of the official rulebook (designer Rikki Tahta). 
 
 ## Implemented so far
 
-2 players; Income, Foreign Aid (not yet blockable) and Coup; the seeded deal, hidden hands, choosing which influence to lose, elimination and the winner. Character actions, challenges, blocks, the Exchange and 3 to 6 players come in later steps.
+2 to 6 players; Income, Foreign Aid (not yet blockable) and Coup; the seeded deal, hidden hands, choosing which influence to lose, elimination and the winner. Character actions, challenges, blocks and the Exchange come in later steps.
+
+Turns go clockwise (seat order `p1` … `pN`) from the starting player, who is chosen by the seed. Eliminated players are skipped in turns and are never asked again. Any living player other than the actor may be targeted.
 
 ## How a turn becomes phases
 
@@ -63,9 +65,9 @@ Each decision is one dialogue phase. Players are `p1` … `pN` in seat order.
 | Phase | Mode | Eligible | talk_rounds | Legal actions (the first is the runner's fallback) | Closes when | Status |
 |---|---|---|---|---|---|---|
 | `action` | ACTION | the actor | `talk_rounds` | at 10+ coins only `{"action":"coup","target":…}`; otherwise `{"action":"income"}`, `{"action":"foreign_aid"}`, then `{"action":"coup","target":…}` per living opponent at 7+ coins (`tax`, `exchange`, `steal`, `assassinate` later) | the action is applied | done |
-| `challenge_action` | RESPONSE_WINDOW | living non-actors, clockwise from the actor | 0 | `"pass"`, `"challenge"` | the first challenge, or everyone passed | later |
-| `block_action` | RESPONSE_WINDOW | Foreign Aid: every living non-actor; Steal, Assassinate: the target | 0 | `"pass"`, then `{"block":<card>}` per allowed card | the first block, or everyone passed | later |
-| `challenge_block` | RESPONSE_WINDOW | living players except the blocker, clockwise from the blocker | 0 | `"pass"`, `"challenge"` | the first challenge, or everyone passed | later |
+| `challenge_action` | RESPONSE_WINDOW | living non-actors, clockwise from the actor | `window_talk_rounds` | `"pass"`, `"challenge"` | the first challenge, or everyone passed | later |
+| `block_action` | RESPONSE_WINDOW | Foreign Aid: every living non-actor; Steal, Assassinate: the target | `window_talk_rounds` | `"pass"`, then `{"block":<card>}` per allowed card | the first block, or everyone passed | later |
+| `challenge_block` | RESPONSE_WINDOW | living players except the blocker, clockwise from the blocker | `window_talk_rounds` | `"pass"`, `"challenge"` | the first challenge, or everyone passed | later |
 | `lose_influence` | ACTION | the first player in the loss queue | 0 | `{"reveal":<card>}` per distinct face-down card | the card is revealed (the runner plays a single option itself) | done |
 | `exchange` | ACTION | the Ambassador | 0 | `{"keep":[…]}` per distinct sorted set, current hand first | the set is kept | later |
 
@@ -73,11 +75,22 @@ A pass keeps the window's `phase_id` and removes the passer from `eligible`; a c
 
 **Observation.** Public: every player's coins, revealed cards, number of face-down cards and whether they are in; the deck size; the turn, the actor and who is deciding; the game's public log. Private: the player's own face-down cards. Hidden: other players' face-down cards and the deck. The game keeps its own log because the runner never puts its `event` entries in prompts.
 
-**Thinking (option B).** Everyone thinks once at the opening. After that only the next actor thinks, at the start of its turn: one extra call per turn instead of one per living player. Responders still see the full public log. Option A (every living player thinks after each turn) is a one-line change in `_end_turn_if_resolved`: pass `self.living()` to `request_thinking`.
+**Thinking.** Everyone thinks once at the opening. After that, `thinking` decides who thinks when a turn ends:
+- `"actor"` (default, option B): only the next actor, at the start of its turn. One extra call per turn; responders still see the full public log.
+- `"all"` (option A): every living player. One extra call per living player per turn; notes are always current.
 
 **Rewards.** The last player with influence gets 1.0, everyone else 0.0. Step rewards are the engine default (each step earns its player's final reward).
 
-**game_config.** `seed`; `players` (2 for now, 2 to 6 later); `max_turns` (default 100); `talk_rounds` (default 1, the action phase only). The starting player and the deal come from the seed.
+**game_config.**
+
+| Key | Default | Meaning |
+|---|---|---|
+| `seed` | (each task) | the deal and the starting player |
+| `players` | (required) | 2 to 6 |
+| `max_turns` | 100 | the turn limit |
+| `talk_rounds` | 1 | talk turns before the main action |
+| `window_talk_rounds` | 0 | talk turns before each answer in challenge and block windows (the windows arrive with challenges and blocks) |
+| `thinking` | `"actor"` | `"actor"` or `"all"`, see Thinking |
 
 ## Interpretation (not stated in the rulebook)
 
@@ -86,7 +99,7 @@ A pass keeps the window's `phase_id` and removes the passer from `eligible`; a c
 ## Simplifications
 
 - A challenged player who holds the claimed card always reveals it.
-- Talk is attached to decisions (`talk_rounds` before the main action); there is no free chat.
+- Talk is attached to decisions (`talk_rounds` before the main action, `window_talk_rounds` in windows); there is no free chat.
 - The Treasury is unlimited.
 - The starting player is chosen by the seed. The rulebook says the winner of the previous game starts.
 - The optional 2-player drafting variant is not implemented. The basic 2-player rule (the starting player gets 1 coin) is.

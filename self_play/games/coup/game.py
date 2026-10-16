@@ -1,16 +1,17 @@
 """Coup, base game. See RULES.md for the rules, their sources and every choice made here.
 
-Implemented so far: 2 players; the actions Income, Foreign Aid (not yet blockable) and Coup;
-the seeded deal, hidden hands, choosing which influence to lose, elimination and the winner.
-Character actions, challenges, blocks and the Exchange come in later steps.
+Implemented so far: 2 to 6 players; the actions Income, Foreign Aid (not yet blockable) and
+Coup; the seeded deal, hidden hands, choosing which influence to lose, elimination and the
+winner. Character actions, challenges, blocks and the Exchange come in later steps.
 
 Each decision is its own phase:
 
     action          ACTION   the actor        talk_rounds from game_config
     lose_influence  ACTION   the loser        reveal one hidden card
 
-Thinking: everyone thinks once at the opening (every game's start); after that only the
-next actor thinks, at the start of its turn (`_end_turn`).
+Turns go clockwise (seat order) from the seeded starting player, skipping eliminated players.
+Thinking: everyone thinks once at the opening (every game's start); after that game_config
+"thinking" decides who thinks when a turn ends: "actor" (the next actor only) or "all".
 """
 
 from typing import Any
@@ -22,25 +23,33 @@ CARDS = ["duke", "assassin", "captain", "ambassador", "contessa"]
 COPIES = 3
 COUP_COST = 7
 FORCED_COUP_COINS = 10
-MIN_PLAYERS, MAX_PLAYERS = 2, 2  # widened to 6 once challenges and blocks exist
-DEFAULTS = {"max_turns": 100, "talk_rounds": 1}
+MIN_PLAYERS, MAX_PLAYERS = 2, 6
+THINKING = ("actor", "all")
+DEFAULTS = {"max_turns": 100, "talk_rounds": 1, "window_talk_rounds": 0, "thinking": "actor"}
+
+
+def check_count(*, key: str, value: Any, minimum: int) -> None:
+    if not isinstance(value, int) or isinstance(value, bool) or value < minimum:
+        raise ValueError(f"{key} must be an integer >= {minimum}, not {value!r}")
 
 
 class CoupGame(Game):
-    """game_config: {"seed": int, "players": 2, "max_turns": int >= 1 (default 100),
-    "talk_rounds": int >= 0 (default 1, the action phase only)}."""
+    """game_config: {"seed": int, "players": 2..6, "max_turns": int >= 1 (default 100),
+    "talk_rounds": int >= 0 (default 1, the action phase), "window_talk_rounds": int >= 0
+    (default 0, challenge and block windows), "thinking": "actor" (default) or "all"}."""
 
     name = "coup"
 
     def initial_state(self) -> dict[str, Any]:
         config = {**DEFAULTS, **self.game_config}
-        players, max_turns, talk_rounds = config["players"], config["max_turns"], config["talk_rounds"]
+        players = config["players"]
         if not isinstance(players, int) or not MIN_PLAYERS <= players <= MAX_PLAYERS:
             raise ValueError(f"players must be an integer from {MIN_PLAYERS} to {MAX_PLAYERS}, not {players!r}")
-        if not isinstance(max_turns, int) or max_turns < 1:
-            raise ValueError(f"max_turns must be a positive integer, not {max_turns!r}")
-        if not isinstance(talk_rounds, int) or talk_rounds < 0:
-            raise ValueError(f"talk_rounds must be a non-negative integer, not {talk_rounds!r}")
+        check_count(key="max_turns", value=config["max_turns"], minimum=1)
+        check_count(key="talk_rounds", value=config["talk_rounds"], minimum=0)
+        check_count(key="window_talk_rounds", value=config["window_talk_rounds"], minimum=0)
+        if config["thinking"] not in THINKING:
+            raise ValueError(f"thinking must be one of {', '.join(THINKING)}, not {config['thinking']!r}")
         ids = [f"p{i}" for i in range(1, players + 1)]
         deck = [card for card in CARDS for _ in range(COPIES)]
         self.rng(label="deal", index=0).shuffle(deck)
@@ -223,8 +232,9 @@ class CoupGame(Game):
             self._log(events=events)
             return events
         self.state["actor"] = self.next_living(after=self.state["actor"])
-        # Thinking option B (RULES.md): only the next actor. Option A would pass self.living().
-        self.request_thinking(player_ids=[self.state["actor"]])
+        # "actor" is option B in RULES.md (the next actor only); "all" is option A.
+        thinkers = self.living() if self.setting(key="thinking") == "all" else [self.state["actor"]]
+        self.request_thinking(player_ids=thinkers)
         return []
 
     def _log(self, *, events: list[str]) -> None:

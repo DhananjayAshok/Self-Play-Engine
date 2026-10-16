@@ -25,9 +25,10 @@ scancel <id>
 
 | Seats | GPU | One game (mean of N, min to max) | Calls/game | Sec/call | Run |
 |---|---|---|---|---|---|
-| all: Qwen2.5-7B-Instruct | A40 | 8 min 5 s (N = 3, 3 min 49 s to 13 min 24 s) | 139 (69 to 200) | 3.5 | coup-qwen7b-13176501, 2026-10-15 |
+| all: Qwen2.5-7B-Instruct | A40 | 8 min 5 s (N = 3, 3 min 49 s to 13 min 24 s) | 139 (69 to 200) | 3.5 | coup-qwen7b-13176501, 2026-10-15, before the "Your decision now" prompt line (52% invalid) |
+| all: Qwen2.5-7B-Instruct | A40 | 2 min 54 s (N = 3, 1 min 44 s to 3 min 50 s) | 49 (30 to 70) | 3.6 | coup-qwen7b-13177897, 2026-10-15, after it (12.5% invalid) |
 
-Game settings: the defaults in RULES.md (`talk_rounds` 1, `window_talk_rounds` 0, `thinking` "actor"), temperature 0, seeds 0, 1, 2. The command's `real` time was 24 min 30 s for the 3 games, matching the sum of the trace times (24 min 16 s). The model's own share of a call (`calls[].time` in the trace) was 2.8 s on average; the rest is client and harness time. 52% of decisions in this run were invalid answers, which the runner replaced with fallbacks, so turn counts and times will change once the prompts improve.
+Game settings for both rows: the defaults in RULES.md (`talk_rounds` 1, `window_talk_rounds` 0, `thinking` "actor"), temperature 0, seeds 0, 1, 2. The commands' `real` times were 24 min 30 s and 8 min 49 s for the 3 games, matching the sums of the trace times (24 min 16 s and 8 min 41 s). The model's own share of a call (`calls[].time` in the trace) was 2.8 s and 2.9 s on average; the rest is client and harness time. Invalid answers are decisions (answer and think calls) the runner replaced with a fallback. Fewer of them made the games much shorter (21 to 45 turns before, 5 to 13 after), so the time per call stayed the same and the time per game fell.
 
 ## Server start
 
@@ -35,4 +36,4 @@ Router "Starting router" to "Router ready" in the vLLM log.
 
 | Model | GPU | First start (with download) | Later starts |
 |---|---|---|---|
-| Qwen2.5-7B-Instruct | A40 | 5 min 1 s, including a 116 s weights download (2026-10-15, job 13170009) | 1 min 30 s (2026-10-15, job 13176501) |
+| Qwen2.5-7B-Instruct | A40 | 5 min 1 s, including a 116 s weights download (2026-10-15, job 13170009) | 1 min 30 s and 2 min 1 s (2026-10-15, jobs 13176501 and 13177897) |

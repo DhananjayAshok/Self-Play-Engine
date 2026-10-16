@@ -4,7 +4,7 @@ from collections import Counter
 
 import pytest
 
-from self_play.chat_model import ScriptedChatModel
+from self_play.chat_model import ChatModel, ModelCallFailed, ScriptedChatModel
 from self_play.game import THINK, DialogueMode
 from self_play.games import GAMES
 from self_play.games.coup import CoupGame
@@ -743,3 +743,108 @@ def test_the_deciding_players_prompt_says_exactly_what_it_is_choosing_now():
     act(game=exchange, moves=[("p1", {"action": "exchange"}), ("p2", "pass"), ("p3", "pass")])
     assert ("Your decision now: choose which cards to keep from your face-down cards and the two you drew; "
             "the rest go back to the deck.") in prompt_of(game=exchange, player_id="p1")
+
+
+# --- crash and resume through the runner ------------------------------------------------
+
+# One 3-player turn and the next, numbered by model call in the order the runner makes them:
+#   0-2  opening thinking (p1, p2, p3)       3-4  p1 talks, declares Steal on p3
+#   5-6  challenge window: p2 answers "maybe" (invalid, falls back to pass), p3 challenges
+#   7    lose_influence: p3 reveals Duke     8    block window: p3 blocks with Ambassador (true)
+#   9-10 challenge_block window: p1 and p2 pass
+#   11-13 p2 thinks (NO CHANGE), stays silent, takes Income; max_turns = 2 then ends the game
+CRASH_REPLIES = {
+    "p1": [reply(answer="p1 notes"), reply(answer="I am taking from p3."),
+           reply(answer='{"action": "steal", "target": "p3"}'), reply(answer="pass")],
+    "p2": [reply(answer="p2 notes"), reply(answer="maybe"), reply(answer="pass"), reply(answer="NO CHANGE"),
+           reply(answer="SILENCE"), reply(answer='{"action": "income"}')],
+    "p3": [reply(answer="p3 notes"), reply(answer="challenge"), reply(answer='{"reveal": "duke"}'),
+           reply(answer='{"block": "ambassador"}')],
+}
+N_CRASH_CALLS = sum(len(replies) for replies in CRASH_REPLIES.values())
+
+
+class CrashSwitch:
+    """Counts model calls across every seat and fails call number `fail_at` (from 0)."""
+
+    def __init__(self, *, fail_at):
+        self.fail_at = fail_at
+        self.count = 0
+
+
+class SeatCrashingChatModel(ChatModel):
+    def __init__(self, *, replies, switch):
+        self.inner = ScriptedChatModel(replies=replies)
+        self.switch = switch
+
+    async def complete(self, *, messages):
+        index = self.switch.count
+        self.switch.count += 1
+        if index == self.switch.fail_at:
+            raise ModelCallFailed("simulated crash")
+        return await self.inner.complete(messages=messages)
+
+
+def crash_game():
+    """The table above, before the opening thinking (the runner plays it)."""
+    game = new_game(players=3, max_turns=2)
+    hands = {"p1": ["captain", "contessa"], "p2": ["duke", "assassin"], "p3": ["duke", "ambassador"]}
+    game.state["hands"] = hands
+    rest = Counter({card: COPIES for card in CARDS}) - Counter(c for cards in hands.values() for c in cards)
+    game.state["deck"] = sorted(rest.elements())
+    game.state["coins"] = {"p1": 3, "p2": 2, "p3": 2}
+    game.state["actor"] = "p1"
+    return game
+
+
+def play_crash_game(*, models, path=None):
+    runner = Runner(game=crash_game(), models=models, checkpoint_path=path)
+    return runner, asyncio.run(runner.run())
+
+
+def test_the_crash_reference_game_covers_windows_losses_and_notes():
+    models = {pid: ScriptedChatModel(replies=replies) for pid, replies in CRASH_REPLIES.items()}
+    runner, result = play_crash_game(models=models)
+    assert all(not model._replies for model in models.values())
+    phases = [e["phase"] for e in runner.record if e["kind"] == "phase"]
+    for phase in ("challenge_action", "lose_influence", "block_action", "challenge_block"):
+        assert phase in phases
+    order = [(e["player_id"], e["call"]) for e in runner.record if e["kind"] == "call"]
+    assert order[5:9] == [("p2", "answer"), ("p3", "answer"), ("p3", "answer"), ("p3", "answer")]
+    assert [e["phase"] for e in runner.record if e["kind"] == "phase"][2:5] == [
+        "challenge_action", "lose_influence", "block_action"]
+    assert result["invalid"] == {"p1": 0, "p2": 1, "p3": 0}
+    assert result["outcome"]["termination_reason"] == "turn_limit"
+    assert {pid: runner.notes(player_id=pid) for pid in CRASH_REPLIES} == {
+        "p1": "p1 notes", "p2": "p2 notes", "p3": "p3 notes"}
+    assert runner.game.state["revealed"]["p3"] == ["duke"] and runner.game.state["coins"]["p1"] == 3
+
+
+@pytest.mark.parametrize("fail_at", range(N_CRASH_CALLS))
+def test_a_coup_game_crashed_at_any_call_resumes_to_the_identical_game(tmp_path, fail_at):
+    """Covers a crash during the opening thinking (0-2), inside the challenge window (5, 6),
+    in lose_influence (7), in the block and block-challenge windows (8-10) and the next turn."""
+    reference, expected = play_crash_game(
+        models={pid: ScriptedChatModel(replies=replies) for pid, replies in CRASH_REPLIES.items()})
+    path = tmp_path / "coup.json"
+
+    switch = CrashSwitch(fail_at=fail_at)
+    crashing = {pid: SeatCrashingChatModel(replies=replies, switch=switch) for pid, replies in CRASH_REPLIES.items()}
+    with pytest.raises(ModelCallFailed):
+        play_crash_game(models=crashing, path=path)
+
+    # Each seat continues from its first reply not yet given; journaled replies are replayed.
+    remaining = {pid: ScriptedChatModel(replies=CRASH_REPLIES[pid][len(crashing[pid].inner.calls):])
+                 for pid in CRASH_REPLIES}
+    resumed, result = play_crash_game(models=remaining, path=path)
+    assert resumed.resumed
+    assert all(not model._replies for model in remaining.values())  # nothing skipped
+    asked_before = sum(len(model.inner.calls) for model in crashing.values())
+    asked_after = sum(len(model.calls) for model in remaining.values())
+    assert asked_before + asked_after == N_CRASH_CALLS  # nothing asked twice
+    assert result == expected
+    assert resumed.record == json.loads(json.dumps(reference.record))
+    assert resumed.game.to_dict() == reference.game.to_dict()
+    assert resumed.invalid == reference.invalid
+    for pid in CRASH_REPLIES:
+        assert resumed.notes(player_id=pid) == reference.notes(player_id=pid)

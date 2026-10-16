@@ -1,14 +1,15 @@
-# Light-model run: Qwen2.5-7B-Instruct plays copycat rock paper scissors, served by vLLM on one
-# GPU. The settings match smoke.toml except for the model. To play another registered game, copy
-# this file and change [env] game and [env.game_config]. From the repo root, with the vLLM server up:
-#   bash scripts/eval.sh --config eval_configs/qwen2.5-7b.toml --name qwen7b-001 --base_url http://<node>:8000/v1
-# The run lands in $storage_dir/eval_runs/<name>/ (traces.jsonl). See README "Run a light model on CARC".
+# Light-model run: Qwen2.5-7B-Instruct plays ONE game of copycat rock paper scissors, served by
+# vLLM on one GPU, so `time` on the command below is the time for one game. The settings match
+# smoke.toml except for the model and the single game. To play another registered game, copy this
+# file and change [env] game and [env.game_config]. From the repo root, with the vLLM server up:
+#   time bash scripts/eval.sh --config eval_configs/qwen2.5-7b.toml --name qwen7b-001 --base_url http://<node>:8000/v1
+# The run lands in $storage_dir/eval_runs/<name>/ (traces.jsonl). See eval_configs/RUNTIMES.md.
 model = "Qwen/Qwen2.5-7B-Instruct"
 push = false              # the default uploads the run to the Prime Intellect platform
-max_concurrent = 2
+max_concurrent = 1        # one game at a time, so wall-clock time is per game
 
 [select]
-limit = 2                 # the taskset is infinite, so the number of games must be set
+limit = 1                 # the taskset is infinite, so the number of games must be set; one game
 
 [client]                  # fallback endpoint for any seat that does not pin one
 type = "eval"

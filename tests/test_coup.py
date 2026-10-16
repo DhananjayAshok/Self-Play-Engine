@@ -704,3 +704,42 @@ def test_random_games_keep_every_invariant():
                 assert all_cards(game=game) == Counter({card: COPIES for card in CARDS})
                 assert all(coins >= 0 for coins in game.state["coins"].values())
             assert game.get_outcome()["done"]
+
+
+# --- what the deciding player is told ---------------------------------------------------
+
+
+def prompt_of(*, game, player_id):
+    return game.render_observation(observation=game.get_observation(player_id=player_id))
+
+
+NOT_YOUR_TURN = "You are not taking a turn, so you cannot declare an action now."
+
+
+def test_the_deciding_players_prompt_says_exactly_what_it_is_choosing_now():
+    game = three_players(p1=["captain", "contessa"], p2=["duke", "assassin"], p3=["duke", "duke"])
+    expected = {"p1": "Your decision now: it is your turn; choose one action. Opponents still in the game: p2, p3."}
+    for pid in ("p1", "p2", "p3"):
+        text = prompt_of(game=game, player_id=pid)
+        assert (expected.get(pid, "Your decision now") in text) is (pid in expected)
+    act(game=game, moves=[("p1", {"action": "steal", "target": "p3"})])
+    assert (f"Your decision now: {NOT_YOUR_TURN} Decide only whether to challenge p1's claim to hold Captain "
+            "(p1 declared Steal targeting p3).") in prompt_of(game=game, player_id="p2")
+    assert (f"Your decision now: {NOT_YOUR_TURN} Decide only whether to challenge p1's claim to hold Captain "
+            "(p1 declared Steal targeting you).") in prompt_of(game=game, player_id="p3")
+    p1_text = prompt_of(game=game, player_id="p1")
+    assert "Your decision now" not in p1_text and "Waiting for p2, p3 to pass or challenge p1's claim." in p1_text
+    act(game=game, moves=[("p2", "pass"), ("p3", "pass")])
+    assert (f"Your decision now: {NOT_YOUR_TURN} Decide only whether to block it (p1 declared Steal targeting you) "
+            "by claiming Captain or Ambassador, or to pass.") in prompt_of(game=game, player_id="p3")
+    act(game=game, moves=[("p3", {"block": "captain"})])
+    assert (f"Your decision now: {NOT_YOUR_TURN} Decide only whether to challenge p3's claim to hold Captain, "
+            "made to block this: p1 declared Steal targeting p3.") in prompt_of(game=game, player_id="p1")
+    assert "Your decision now" not in prompt_of(game=game, player_id="p3")  # the blocker is not asked
+    act(game=game, moves=[("p1", "challenge")])  # p3 holds no Captain: it loses an influence
+    assert ("Your decision now: you lose an influence; choose which of your face-down cards to reveal."
+            in prompt_of(game=game, player_id="p3"))
+    exchange = three_players(p1=["ambassador", "duke"], p2=["duke", "duke"], p3=["contessa", "assassin"])
+    act(game=exchange, moves=[("p1", {"action": "exchange"}), ("p2", "pass"), ("p3", "pass")])
+    assert ("Your decision now: choose which cards to keep from your face-down cards and the two you drew; "
+            "the rest go back to the deck.") in prompt_of(game=exchange, player_id="p1")

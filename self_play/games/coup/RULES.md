@@ -52,9 +52,9 @@ Two independent transcriptions of the official rulebook (designer Rikki Tahta). 
 **Talk**
 - Negotiation is allowed but never binding. Players may not show cards to each other. Coins cannot be given or lent.
 
-## Implemented so far
+## Implemented
 
-2 to 6 players; Income, Foreign Aid (not yet blockable) and Coup; the seeded deal, hidden hands, choosing which influence to lose, elimination and the winner. Character actions, challenges, blocks and the Exchange come in later steps.
+Every rule above: 2 to 6 players, all seven actions, the challenge of a claim, blocks, the challenge of a block, choosing which influence to lose, the Exchange, elimination and the winner.
 
 Turns go clockwise (seat order `p1` … `pN`) from the starting player, who is chosen by the seed. Eliminated players are skipped in turns and are never asked again. Any living player other than the actor may be targeted.
 
@@ -62,18 +62,24 @@ Turns go clockwise (seat order `p1` … `pN`) from the starting player, who is c
 
 Each decision is one dialogue phase. Players are `p1` … `pN` in seat order.
 
-| Phase | Mode | Eligible | talk_rounds | Legal actions (the first is the runner's fallback) | Closes when | Status |
-|---|---|---|---|---|---|---|
-| `action` | ACTION | the actor | `talk_rounds` | at 10+ coins only `{"action":"coup","target":…}`; otherwise `{"action":"income"}`, `{"action":"foreign_aid"}`, then `{"action":"coup","target":…}` per living opponent at 7+ coins (`tax`, `exchange`, `steal`, `assassinate` later) | the action is applied | done |
-| `challenge_action` | RESPONSE_WINDOW | living non-actors, clockwise from the actor | `window_talk_rounds` | `"pass"`, `"challenge"` | the first challenge, or everyone passed | later |
-| `block_action` | RESPONSE_WINDOW | Foreign Aid: every living non-actor; Steal, Assassinate: the target | `window_talk_rounds` | `"pass"`, then `{"block":<card>}` per allowed card | the first block, or everyone passed | later |
-| `challenge_block` | RESPONSE_WINDOW | living players except the blocker, clockwise from the blocker | `window_talk_rounds` | `"pass"`, `"challenge"` | the first challenge, or everyone passed | later |
-| `lose_influence` | ACTION | the first player in the loss queue | 0 | `{"reveal":<card>}` per distinct face-down card | the card is revealed (the runner plays a single option itself) | done |
-| `exchange` | ACTION | the Ambassador | 0 | `{"keep":[…]}` per distinct sorted set, current hand first | the set is kept | later |
+| Phase | Mode | Eligible | talk_rounds | Legal actions (the first is the runner's fallback) | Closes when |
+|---|---|---|---|---|---|
+| `action` | ACTION | the actor | `talk_rounds` | at 10+ coins only `{"action":"coup","target":…}`; otherwise `{"action":"income"}`, `{"action":"foreign_aid"}`, `{"action":"tax"}`, `{"action":"exchange"}`, `{"action":"steal","target":…}` per living opponent, `{"action":"assassinate","target":…}` per living opponent at 3+ coins, `{"action":"coup","target":…}` per living opponent at 7+ coins | the action is declared |
+| `challenge_action` | RESPONSE_WINDOW | living non-actors, clockwise from the actor | `window_talk_rounds` | `"pass"`, `"challenge"` | the first challenge, or everyone passed |
+| `block_action` | RESPONSE_WINDOW | Foreign Aid: every living non-actor, clockwise; Steal, Assassinate: the target, if still in | `window_talk_rounds` | `"pass"`, then `{"block":<card>}` per allowed card | the first block, or everyone passed |
+| `challenge_block` | RESPONSE_WINDOW | living players except the blocker, clockwise from the blocker | `window_talk_rounds` | `"pass"`, `"challenge"` | the first challenge, or everyone passed |
+| `lose_influence` | ACTION | the first player in the loss queue | 0 | `{"reveal":<card>}` per distinct face-down card | the card is revealed (the runner plays a single option itself) |
+| `exchange` | ACTION | the Ambassador | 0 | `{"keep":[…]}` per distinct sorted set, current hand first | the set is kept |
 
 A pass keeps the window's `phase_id` and removes the passer from `eligible`; a challenge or block opens a new phase, so the runner asks nobody else.
 
-**Observation.** Public: every player's coins, revealed cards, number of face-down cards and whether they are in; the deck size; the turn, the actor and who is deciding; the game's public log. Private: the player's own face-down cards. Hidden: other players' face-down cards and the deck. The game keeps its own log because the runner never puts its `event` entries in prompts.
+**Resolution order** (from the rules and the flow above):
+- Costs are paid when the action is declared: a successfully challenged action refunds them, a blocked one does not.
+- A claimant who proves a claim shuffles the shown card into the deck and draws a replacement at once; then the challenger reveals a card.
+- Losses are revealed in order before the turn goes on, so a target can lose two influences in one assassination turn. A target who is out before its block window gets no block window, and the action then has no effect on it.
+- A block that is challenged and proven a bluff fails, and the action resolves. Nobody else is offered a block.
+
+**Observation.** Public: every player's coins, revealed cards, number of face-down cards and whether they are in; the deck size; the turn, the actor and who is deciding; the action being resolved and any block; the game's public log. Private: the player's own face-down cards and, during its own Exchange, the two drawn cards. Hidden: other players' face-down cards, cards drawn by someone else (in an Exchange or as a replacement), the cards returned in an Exchange, and the deck. The game keeps its own log because the runner never puts its `event` entries in prompts.
 
 **Thinking.** Everyone thinks once at the opening. After that, `thinking` decides who thinks when a turn ends:
 - `"actor"` (default, option B): only the next actor, at the start of its turn. One extra call per turn; responders still see the full public log.
@@ -89,12 +95,13 @@ A pass keeps the window's `phase_id` and removes the passer from `eligible`; a c
 | `players` | (required) | 2 to 6 |
 | `max_turns` | 100 | the turn limit |
 | `talk_rounds` | 1 | talk turns before the main action |
-| `window_talk_rounds` | 0 | talk turns before each answer in challenge and block windows (the windows arrive with challenges and blocks) |
+| `window_talk_rounds` | 0 | talk turns before each answer in challenge and block windows |
 | `thinking` | `"actor"` | `"actor"` or `"all"`, see Thinking |
 
 ## Interpretation (not stated in the rulebook)
 
 - **Serialised phases.** Because challenges come before blocks, a player who loses a challenge against an action may still block it afterwards, if they have influence left.
+- **Steal from a player with no coins.** Legal, and takes 0. The rulebook gives the amount only for 2+ coins and 1 coin; we keep the action legal against anyone, so a Captain claim (true or bluffed) stays available.
 
 ## Simplifications
 

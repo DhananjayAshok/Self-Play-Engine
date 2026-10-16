@@ -9,14 +9,41 @@ Each player starts with 2 face-down character cards (their influence) and 2 coin
 starting player gets only 1 coin. The deck holds 15 cards: 3 each of Duke, Assassin, Captain, Ambassador
 and Contessa. Coins are public; face-down cards are seen only by their owner.
 
-Players take turns in seat order. On your turn you take exactly one action:
+Players take turns in seat order. On your turn you take exactly one action. You may claim any character,
+whether or not you hold it:
 - Income: take 1 coin.
-- Foreign Aid: take 2 coins.
-- Coup: pay 7 coins; the target loses one influence. If you start your turn with 10 or more coins,
-  you must launch a Coup.
+- Foreign Aid: take 2 coins. Any other player may block it by claiming Duke.
+- Coup: pay 7 coins; the target loses one influence. Cannot be blocked or challenged. If you start your
+  turn with 10 or more coins, you must launch a Coup.
+- Tax (claims Duke): take 3 coins.
+- Assassinate (claims Assassin): pay 3 coins; the target loses one influence. The target may block by
+  claiming Contessa.
+- Steal (claims Captain): take 2 coins from the target (1 if it has 1, 0 if it has none). The target may
+  block by claiming Captain or Ambassador.
+- Exchange (claims Ambassador): draw 2 cards from the deck, keep as many cards as you had, return the rest.
+
+Challenges: when someone claims a character, for an action or a block, any other player may challenge.
+The claimant then shows the card if they hold it: they shuffle it into the deck and draw a new card, and
+the challenger loses one influence. If they cannot show it, the claimant loses one influence and the
+action or block fails. A challenged action that fails refunds its cost; a blocked action does not.
+Challenges come before blocks: an action that survives its challenge can still be blocked.
+
 A player who loses an influence chooses which of their face-down cards to reveal; revealed cards stay face up.
 A player with no face-down cards is out. The last player with influence wins; if the turn limit is
 reached first, nobody wins. Talk is allowed but never binding."""
+
+ACTION_TEXT = {"income": "Income", "foreign_aid": "Foreign Aid", "coup": "Coup", "tax": "Tax (claims Duke)",
+               "assassinate": "Assassinate (claims Assassin)", "steal": "Steal (claims Captain)",
+               "exchange": "Exchange (claims Ambassador)"}
+
+PHASE_TEXT = {
+    "action": "{actor} is choosing an action.",
+    "challenge_action": "Waiting for {deciding} to pass or challenge {actor}'s claim.",
+    "block_action": "Waiting for {deciding} to pass or block.",
+    "challenge_block": "Waiting for {deciding} to pass or challenge the block.",
+    "lose_influence": "{deciding} must reveal one face-down card.",
+    "exchange": "{actor} is choosing which cards to keep.",
+}
 
 
 def rules_text(*, players: int, max_turns: int) -> str:
@@ -43,10 +70,20 @@ def render_prompt(*, rules: str, observation: dict[str, Any]) -> str:
         "Players:\n" + "\n".join(table) + f"\nCards left in the deck: {observation['deck_size']}.",
         "What has happened so far:\n" + "\n".join(f"- {line}" for line in observation["log"]),
     ]
-    if observation["phase"] == "action":
-        parts.append(f"It is turn {observation['turn']} of at most {observation['max_turns']}. {observation['actor']} is choosing an action.")
-    elif observation["phase"] == "lose_influence":
-        parts.append(f"It is turn {observation['turn']}. {observation['deciding']} must reveal one face-down card.")
+    if observation["your_drawn_cards"]:
+        parts.append(f"You drew: {_card_list(observation['your_drawn_cards'])}.")
+    pending = observation["pending"]
+    if pending is not None:
+        action = pending["action"]
+        target = f" targeting {action['target']}" if "target" in action else ""
+        line = f"Being resolved: {pending['actor']} declared {ACTION_TEXT[action['action']]}{target}."
+        if pending["block"]:
+            line += f" {pending['block']['by']} blocks, claiming {pending['block']['card'].capitalize()}."
+        parts.append(line)
+    if observation["phase"] is not None:
+        situation = PHASE_TEXT[observation["phase"]].format(
+            actor=observation["actor"], deciding=", ".join(observation["deciding"]))
+        parts.append(f"It is turn {observation['turn']} of at most {observation['max_turns']}. {situation}")
     return "\n\n".join(parts)
 
 
@@ -55,9 +92,18 @@ def answer_request(*, legal_actions: list[Any]) -> str:
     return f"Your answer is one of these actions, written exactly as shown (JSON):\n{options}"
 
 
+def _normal(value: Any) -> Any:
+    if isinstance(value, str):
+        return value.lower()
+    if isinstance(value, list):
+        return sorted(_normal(item) for item in value) if all(isinstance(item, str) for item in value) else value
+    return value
+
+
 def parse_action(*, answer: str) -> Any:
-    """The action as JSON, with a surrounding code fence ignored. A bare word becomes a
-    string action (e.g. "pass"). Reading is not checking legality: `step` does that."""
+    """The action as JSON, with a surrounding code fence ignored, in lower case, with card
+    lists sorted. A bare word becomes a string action (e.g. "pass"). Reading is not checking
+    legality: `step` does that."""
     text = answer.strip()
     if text.startswith("```"):
         text = text.strip("`").strip()
@@ -73,5 +119,5 @@ def parse_action(*, answer: str) -> Any:
             return word
         raise ValueError("write one of the listed actions exactly, as JSON") from None
     if isinstance(action, dict):
-        return {str(key).lower(): value.lower() if isinstance(value, str) else value for key, value in action.items()}
-    return action.lower() if isinstance(action, str) else action
+        return {str(key).lower(): _normal(value) for key, value in action.items()}
+    return _normal(action)

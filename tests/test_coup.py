@@ -30,7 +30,27 @@ def deciding(*, game):
 
 def all_cards(*, game):
     state = game.state
-    return Counter(state["deck"] + [c for pid in game.player_ids for c in state["hands"][pid] + state["revealed"][pid]])
+    drawn = state["turn_ctx"]["drawn"] if state["turn_ctx"] else []
+    return Counter(state["deck"] + drawn + [c for pid in game.player_ids for c in state["hands"][pid] + state["revealed"][pid]])
+
+
+def setup_table(*, hands, coins, actor="p1", **settings):
+    """A game with these hands and coins (the deck holds the rest), after the opening thinking."""
+    game = new_game(players=len(hands), talk_rounds=0, **settings)
+    game.state["hands"] = {pid: list(cards) for pid, cards in hands.items()}
+    rest = Counter({card: COPIES for card in CARDS}) - Counter(c for cards in hands.values() for c in cards)
+    game.state["deck"] = sorted(rest.elements())
+    game.state["coins"] = dict(coins)
+    game.state["actor"] = actor
+    think_all(game=game)
+    return game
+
+
+def act(*, game, moves):
+    """Apply (player, action) pairs in order; every one must be accepted."""
+    for player_id, action in moves:
+        result = game.step(player_id=player_id, action=action)
+        assert result.accepted, (player_id, action, result.error)
 
 
 def reply(*, answer):
@@ -117,11 +137,55 @@ def test_legal_actions_match_the_design():
     game = new_game()
     actor = deciding(game=game)
     other = "p2" if actor == "p1" else "p1"
-    income, foreign_aid, coup = {"action": "income"}, {"action": "foreign_aid"}, {"action": "coup", "target": other}
-    for coins, expected in [(0, [income, foreign_aid]), (6, [income, foreign_aid]), (7, [income, foreign_aid, coup]),
-                            (9, [income, foreign_aid, coup]), (10, [coup]), (12, [coup])]:
+    base = [{"action": "income"}, {"action": "foreign_aid"}, {"action": "tax"}, {"action": "exchange"},
+            {"action": "steal", "target": other}]
+    assassinate, coup = {"action": "assassinate", "target": other}, {"action": "coup", "target": other}
+    for coins, expected in [(0, base), (2, base), (3, base + [assassinate]), (6, base + [assassinate]),
+                            (7, base + [assassinate, coup]), (9, base + [assassinate, coup]), (10, [coup]), (12, [coup])]:
         game.state["coins"][actor] = coins
         assert game.get_legal_actions(player_id=actor) == expected
+
+
+def test_legal_actions_in_windows_and_the_exchange_match_the_design():
+    game = new_game(players=3)
+    game.state["actor"] = "p1"
+    game.state["coins"]["p1"] = 3
+    think_all(game=game)
+    assert [a for a in game.get_legal_actions(player_id="p1") if a.get("target") == "p3"] == [
+        {"action": "steal", "target": "p3"}, {"action": "assassinate", "target": "p3"}]
+    assert game.step(player_id="p1", action={"action": "steal", "target": "p3"}).accepted
+    phase = game.get_dialogue_phase()
+    assert (phase.phase, phase.mode, phase.eligible) == ("challenge_action", DialogueMode.RESPONSE_WINDOW, ("p2", "p3"))
+    assert game.get_legal_actions(player_id="p2") == ["pass", "challenge"]
+    assert game.get_legal_actions(player_id="p1") == []
+    assert game.step(player_id="p2", action="pass").accepted and game.step(player_id="p3", action="pass").accepted
+    phase = game.get_dialogue_phase()
+    assert (phase.phase, phase.eligible) == ("block_action", ("p3",))  # only the target may block a Steal
+    assert game.get_legal_actions(player_id="p3") == ["pass", {"block": "captain"}, {"block": "ambassador"}]
+    assert game.step(player_id="p3", action={"block": "captain"}).accepted
+    phase = game.get_dialogue_phase()
+    assert (phase.phase, phase.eligible) == ("challenge_block", ("p1", "p2"))  # clockwise from the blocker
+    assert game.get_legal_actions(player_id="p1") == ["pass", "challenge"]
+
+
+def test_foreign_aid_can_be_blocked_by_any_other_player_and_assassinate_only_by_the_target():
+    game = new_game(players=4)
+    game.state["actor"] = "p2"
+    think_all(game=game)
+    assert game.step(player_id="p2", action={"action": "foreign_aid"}).accepted
+    phase = game.get_dialogue_phase()
+    assert (phase.phase, phase.eligible) == ("block_action", ("p3", "p4", "p1"))  # no challenge: no claim
+    assert game.get_legal_actions(player_id="p4") == ["pass", {"block": "duke"}]
+    game = new_game(players=4)
+    game.state["actor"] = "p2"
+    game.state["coins"]["p2"] = 3
+    think_all(game=game)
+    assert game.step(player_id="p2", action={"action": "assassinate", "target": "p4"}).accepted
+    for pid in ("p3", "p4", "p1"):
+        assert game.step(player_id=pid, action="pass").accepted
+    phase = game.get_dialogue_phase()
+    assert (phase.phase, phase.eligible) == ("block_action", ("p4",))
+    assert game.get_legal_actions(player_id="p4") == ["pass", {"block": "contessa"}]
 
 
 def test_lose_influence_offers_each_distinct_card_once():
@@ -145,7 +209,8 @@ def test_illegal_actions_change_nothing():
     other = "p2" if actor == "p1" else "p1"
     before = game.to_dict()
     for player_id, action in [(actor, {"action": "coup", "target": other}), (other, {"action": "income"}),
-                              (actor, {"action": "tax"}), (actor, "income"), (actor, THINK)]:
+                              (actor, {"action": "steal"}), (actor, {"action": "steal", "target": actor}),
+                              (actor, "income"), (actor, "pass"), (actor, THINK)]:
         result = game.step(player_id=player_id, action=action)
         assert not result.accepted and result.error
     assert game.to_dict() == before
@@ -165,6 +230,9 @@ def test_income_foreign_aid_and_coup_change_coins_and_pass_the_turn():
     assert game.get_dialogue_phase().eligible == (other,)  # only the next actor thinks
     assert deciding(game=game) == other
     assert game.step(player_id=other, action={"action": "foreign_aid"}).accepted
+    assert game.get_dialogue_phase().phase == "block_action"  # nothing is paid before the block window closes
+    assert game.state["coins"][other] == start[other]
+    assert game.step(player_id=actor, action="pass").accepted
     assert game.state["coins"][other] == start[other] + 2
     assert deciding(game=game) == actor
     game.state["coins"][actor] = 8
@@ -204,7 +272,7 @@ def test_rule_based_games_from_the_seed_always_end_with_one_winner():
                 player_id = deciding(game=game)
                 assert game.alive(player_id=player_id)  # the eliminated never act
                 legal = game.get_legal_actions(player_id=player_id)
-                coups = [action for action in legal if action.get("action") == "coup"]
+                coups = [action for action in legal if isinstance(action, dict) and action.get("action") == "coup"]
                 assert all(game.alive(player_id=c["target"]) and c["target"] != player_id for c in coups)
                 choice = coups[0] if coups else legal[1] if legal[0] == {"action": "income"} else legal[0]
                 assert game.step(player_id=player_id, action=choice).accepted
@@ -299,8 +367,8 @@ def test_no_opponent_card_appears_in_an_observation_or_prompt():
 def test_the_observation_has_exactly_the_designed_fields():
     game = new_game()
     observation = game.get_observation(player_id="p1")
-    assert set(observation) == {"you", "your_cards", "players", "deck_size", "turn", "max_turns", "actor",
-                                "phase", "deciding", "log", "winner"}
+    assert set(observation) == {"you", "your_cards", "your_drawn_cards", "players", "deck_size", "turn",
+                                "max_turns", "actor", "pending", "phase", "deciding", "log", "winner"}
     assert set(observation["players"][0]) == {"id", "coins", "hidden_cards", "revealed", "alive"}
 
 
@@ -434,3 +502,205 @@ def test_a_scripted_six_player_game_ends_with_one_winner_and_the_eliminated_are_
     for k in range(2, 7):
         assert calls_after_elimination(runner=runner, player_id=f"p{k}") == []
         assert len(models[f"p{k}"].calls) == 1 + 2 * (k - 2)
+
+
+# --- challenges, blocks and the Exchange ------------------------------------------------
+
+
+def test_the_challenge_window_closes_at_the_first_challenge_and_the_third_player_is_not_asked():
+    """p1 claims Duke for Tax (true); p2 challenges first, so p3 is never asked; p2 loses an
+    influence and the Tax goes ahead. max_turns = 1 ends the game after this turn."""
+    game = setup_table(hands={"p1": ["duke", "captain"], "p2": ["contessa", "assassin"], "p3": ["duke", "ambassador"]},
+                       coins={"p1": 2, "p2": 2, "p3": 2}, max_turns=1)
+    replies = {
+        "p1": [reply(answer='{"action": "tax"}')],
+        "p2": [reply(answer="challenge"), reply(answer='{"reveal": "contessa"}')],
+        "p3": [],  # never asked: the opening thinking was played by setup_table
+    }
+    result, runner, models = run_scripted(game=game, replies=replies)
+    assert models["p3"].calls == []
+    window = [e for e in runner.record if e["kind"] == "phase" and e["phase"] == "challenge_action"]
+    assert len(window) == 1 and window[0]["eligible"] == ["p2", "p3"]
+    assert not [e for e in runner.record if e["kind"] == "call" and e["player_id"] == "p3" and e["call"] != "think"]
+    assert game.state["coins"]["p1"] == 5  # the proven Tax went ahead
+    assert game.state["revealed"]["p2"] == ["contessa"]
+    assert len(game.state["hands"]["p1"]) == 2 and "captain" in game.state["hands"]["p1"]
+    assert all_cards(game=game) == Counter({card: COPIES for card in CARDS})
+    assert result["outcome"]["termination_reason"] == "turn_limit"
+
+
+def three_players(*, p1, p2, p3, coins=(3, 2, 2)):
+    return setup_table(hands={"p1": p1, "p2": p2, "p3": p3}, coins=dict(zip(("p1", "p2", "p3"), coins)))
+
+
+def test_a_true_claim_survives_a_challenge_the_claimant_draws_a_new_card_and_the_challenger_loses():
+    game = three_players(p1=["captain", "contessa"], p2=["duke", "assassin"], p3=["duke", "duke"])
+    act(game=game, moves=[("p1", {"action": "steal", "target": "p3"}), ("p2", "challenge")])
+    assert game.get_dialogue_phase().phase == "lose_influence" and game.get_dialogue_phase().eligible == ("p2",)
+    assert len(game.state["hands"]["p1"]) == 2 and game.state["shuffles"] == 1
+    act(game=game, moves=[("p2", {"reveal": "assassin"}), ("p3", "pass")])  # p3 may still block: it passes
+    assert game.state["coins"] == {"p1": 5, "p2": 2, "p3": 0}
+    assert all_cards(game=game) == Counter({card: COPIES for card in CARDS})
+
+
+def test_a_false_claim_loses_the_challenge_and_the_action_fails():
+    game = three_players(p1=["captain", "contessa"], p2=["duke", "assassin"], p3=["duke", "duke"])
+    act(game=game, moves=[("p1", {"action": "tax"}), ("p2", "pass"), ("p3", "challenge"), ("p1", {"reveal": "captain"})])
+    assert game.state["coins"]["p1"] == 3  # no Tax
+    assert game.state["hands"]["p1"] == ["contessa"] and game.state["revealed"]["p3"] == []
+    assert game.state["turn_ctx"] is None and game.state["actor"] == "p2"
+
+
+def test_a_challenged_bluffed_assassination_refunds_the_three_coins():
+    game = three_players(p1=["duke", "captain"], p2=["duke", "assassin"], p3=["contessa", "duke"])
+    act(game=game, moves=[("p1", {"action": "assassinate", "target": "p3"})])
+    assert game.state["coins"]["p1"] == 0  # paid when declared
+    act(game=game, moves=[("p2", "challenge"), ("p1", {"reveal": "duke"})])
+    assert game.state["coins"]["p1"] == 3  # refunded
+    assert game.state["hands"]["p3"] == ["contessa", "duke"]  # the target loses nothing
+
+
+def test_a_blocked_assassination_keeps_the_three_coins_spent():
+    game = three_players(p1=["assassin", "captain"], p2=["duke", "duke"], p3=["contessa", "duke"])
+    act(game=game, moves=[("p1", {"action": "assassinate", "target": "p3"}), ("p2", "pass"), ("p3", "pass"),
+                          ("p3", {"block": "contessa"}), ("p1", "pass"), ("p2", "pass")])
+    assert game.state["coins"]["p1"] == 0
+    assert game.state["hands"]["p3"] == ["contessa", "duke"]
+    assert game.state["turn_ctx"] is None
+
+
+def test_challenging_a_true_block_costs_the_challenger_and_the_block_stands():
+    game = three_players(p1=["assassin", "captain"], p2=["duke", "ambassador"], p3=["contessa", "duke"])
+    act(game=game, moves=[("p1", {"action": "assassinate", "target": "p3"}), ("p2", "pass"), ("p3", "pass"),
+                          ("p3", {"block": "contessa"}), ("p1", "challenge")])
+    assert game.get_dialogue_phase().eligible == ("p1",)  # the challenger loses
+    act(game=game, moves=[("p1", {"reveal": "captain"})])
+    assert game.state["coins"]["p1"] == 0 and len(game.state["hands"]["p3"]) == 2  # spent; the block stood
+    assert game.state["turn_ctx"] is None
+
+
+def test_a_bluffed_contessa_that_is_challenged_loses_two_influences():
+    game = three_players(p1=["assassin", "captain"], p2=["duke", "ambassador"], p3=["duke", "captain"])
+    act(game=game, moves=[("p1", {"action": "assassinate", "target": "p3"}), ("p2", "pass"), ("p3", "pass"),
+                          ("p3", {"block": "contessa"}), ("p1", "challenge"), ("p3", {"reveal": "duke"})])
+    assert game.get_dialogue_phase().phase == "lose_influence"  # the assassination now resolves
+    act(game=game, moves=[("p3", {"reveal": "captain"})])
+    assert not game.alive(player_id="p3") and game.state["revealed"]["p3"] == ["duke", "captain"]
+
+
+def test_losing_a_challenge_then_being_assassinated_removes_two_influences():
+    game = three_players(p1=["assassin", "captain"], p2=["duke", "ambassador"], p3=["duke", "captain"])
+    act(game=game, moves=[("p1", {"action": "assassinate", "target": "p3"}), ("p2", "pass"), ("p3", "challenge"),
+                          ("p3", {"reveal": "duke"})])
+    phase = game.get_dialogue_phase()
+    assert (phase.phase, phase.eligible) == ("block_action", ("p3",))  # it may still block (serialised phases)
+    act(game=game, moves=[("p3", "pass"), ("p3", {"reveal": "captain"})])
+    assert not game.alive(player_id="p3")
+
+
+def test_a_target_out_before_its_block_window_gets_none_and_the_action_has_no_effect():
+    game = three_players(p1=["assassin", "captain"], p2=["duke", "ambassador"], p3=["duke"])
+    game.state["revealed"]["p3"] = ["contessa"]
+    act(game=game, moves=[("p1", {"action": "assassinate", "target": "p3"}), ("p2", "pass"), ("p3", "challenge")])
+    act(game=game, moves=[("p3", {"reveal": "duke"})])  # p3 is out
+    assert game.state["turn_ctx"] is None and game.state["coins"]["p1"] == 0
+    assert game.state["actor"] == "p2"
+
+
+def test_a_bluffed_block_fails_and_the_steal_goes_ahead():
+    game = three_players(p1=["captain", "duke"], p2=["duke", "ambassador"], p3=["duke", "contessa"], coins=(2, 2, 5))
+    act(game=game, moves=[("p1", {"action": "steal", "target": "p3"}), ("p2", "pass"), ("p3", "pass"),
+                          ("p3", {"block": "ambassador"}), ("p1", "pass"), ("p2", "challenge"),
+                          ("p3", {"reveal": "duke"})])
+    assert game.state["coins"] == {"p1": 4, "p2": 2, "p3": 3}
+
+
+def test_steal_takes_two_one_or_nothing():
+    for target_coins, taken in [(5, 2), (2, 2), (1, 1), (0, 0)]:
+        game = three_players(p1=["captain", "duke"], p2=["duke", "duke"], p3=["contessa", "assassin"],
+                             coins=(2, 2, target_coins))
+        assert {"action": "steal", "target": "p3"} in game.get_legal_actions(player_id="p1")
+        act(game=game, moves=[("p1", {"action": "steal", "target": "p3"}), ("p2", "pass"), ("p3", "pass"),
+                              ("p3", "pass")])
+        assert game.state["coins"]["p1"] == 2 + taken and game.state["coins"]["p3"] == target_coins - taken
+
+
+def test_foreign_aid_blocked_by_a_duke_gives_nothing():
+    game = three_players(p1=["captain", "duke"], p2=["duke", "duke"], p3=["contessa", "assassin"])
+    act(game=game, moves=[("p1", {"action": "foreign_aid"}), ("p2", {"block": "duke"}), ("p3", "pass"),
+                          ("p1", "pass")])
+    assert game.state["coins"]["p1"] == 3 and game.state["turn_ctx"] is None
+
+
+def test_the_exchange_never_shows_the_drawn_cards_to_other_players():
+    game = three_players(p1=["ambassador", "duke"], p2=["duke", "duke"], p3=["contessa", "assassin"])
+    act(game=game, moves=[("p1", {"action": "exchange"}), ("p2", "pass"), ("p3", "pass")])
+    phase = game.get_dialogue_phase()
+    assert (phase.phase, phase.eligible) == ("exchange", ("p1",))
+    drawn = game.state["turn_ctx"]["drawn"]
+    assert len(drawn) == 2 and game.get_observation(player_id="p1")["your_drawn_cards"] == drawn
+    legal = game.get_legal_actions(player_id="p1")
+    assert legal[0] == {"keep": ["ambassador", "duke"]}  # keeping the hand is the fallback
+    assert all(len(option["keep"]) == 2 for option in legal) and len(legal) == len({json.dumps(o) for o in legal})
+    for viewer in ("p2", "p3"):
+        assert game.get_observation(player_id=viewer)["your_drawn_cards"] is None
+        swapped = CoupGame.from_dict(data=game.to_dict())
+        swapped.state["turn_ctx"]["drawn"] = ["captain", "captain"] if drawn != ["captain", "captain"] else ["duke", "duke"]
+        assert seen_by(game=game, player_id=viewer) == seen_by(game=swapped, player_id=viewer)
+    keep = legal[-1]
+    returned = Counter(["ambassador", "duke"] + drawn) - Counter(keep["keep"])
+    deck_before = Counter(game.state["deck"])
+    act(game=game, moves=[("p1", keep)])
+    assert sorted(game.state["hands"]["p1"]) == keep["keep"]
+    assert Counter(game.state["deck"]) == deck_before + returned
+    assert all_cards(game=game) == Counter({card: COPIES for card in CARDS})
+    for viewer in ("p2", "p3"):  # nor which cards went back
+        swapped = CoupGame.from_dict(data=game.to_dict())
+        swapped.state["deck"] = list(reversed(game.state["deck"]))
+        swapped.state["hands"]["p1"] = ["contessa"] * len(game.state["hands"]["p1"])
+        assert seen_by(game=game, player_id=viewer) == seen_by(game=swapped, player_id=viewer)
+
+
+def test_parse_answer_reads_a_keep_list_in_any_order():
+    game = new_game()
+    assert game.parse_answer(player_id="p1", answer='{"keep": ["Duke", "ambassador"]}') == {"keep": ["ambassador", "duke"]}
+
+
+def window_talk_game(*, window_talk_rounds):
+    """p1 declares Tax; p2 and p3 each pass the challenge window; max_turns = 1 ends the game."""
+    game = setup_table(hands={"p1": ["duke", "captain"], "p2": ["contessa", "assassin"], "p3": ["duke", "ambassador"]},
+                       coins={"p1": 2, "p2": 2, "p3": 2}, max_turns=1, window_talk_rounds=window_talk_rounds)
+    talk = [reply(answer="I believe you.")] * window_talk_rounds
+    replies = {"p1": [reply(answer='{"action": "tax"}')], "p2": talk + [reply(answer="pass")],
+               "p3": talk + [reply(answer="pass")]}
+    result, runner, _ = run_scripted(game=game, replies=replies)
+    return runner
+
+
+def test_window_talk_rounds_zero_and_one_both_work():
+    for rounds in (0, 1):
+        runner = window_talk_game(window_talk_rounds=rounds)
+        talks = [e["player_id"] for e in runner.record if e["kind"] == "call" and e["call"] == "talk"]
+        messages = [e["player_id"] for e in runner.record if e["kind"] == "message"]
+        assert talks == messages == (["p2", "p3"] if rounds else [])
+        window = [e for e in runner.record if e["kind"] == "phase" and e["phase"] == "challenge_action"]
+        assert window[0]["talk_rounds"] == rounds
+
+
+def test_random_games_keep_every_invariant():
+    """Uniformly random legal play, 2 to 6 players: cards are conserved, coins never go
+    negative, the eliminated are never eligible, and every open phase has someone to act."""
+    import random
+    for players in range(2, 7):
+        for seed in range(25):
+            game = new_game(seed=seed, players=players, max_turns=200)
+            chooser = random.Random(f"{players}:{seed}")
+            while (phase := game.get_dialogue_phase()) is not None:
+                assert phase.eligible and all(game.alive(player_id=pid) for pid in phase.eligible)
+                player_id = phase.eligible[0]
+                legal = game.get_legal_actions(player_id=player_id)
+                assert legal
+                assert game.step(player_id=player_id, action=chooser.choice(legal)).accepted
+                assert all_cards(game=game) == Counter({card: COPIES for card in CARDS})
+                assert all(coins >= 0 for coins in game.state["coins"].values())
+            assert game.get_outcome()["done"]

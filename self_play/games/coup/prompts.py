@@ -36,6 +36,10 @@ ACTION_TEXT = {"income": "Income", "foreign_aid": "Foreign Aid", "coup": "Coup",
                "assassinate": "Assassinate (claims Assassin)", "steal": "Steal (claims Captain)",
                "exchange": "Exchange (claims Ambassador)"}
 
+CLAIM_CARD = {"tax": "Duke", "assassinate": "Assassin", "steal": "Captain", "exchange": "Ambassador"}
+BLOCK_CARDS = {"foreign_aid": "Duke", "steal": "Captain or Ambassador", "assassinate": "Contessa"}
+NOT_YOUR_TURN = "You are not taking a turn, so you cannot declare an action now."
+
 PHASE_TEXT = {
     "action": "{actor} is choosing an action.",
     "challenge_action": "Waiting for {deciding} to pass or challenge {actor}'s claim.",
@@ -81,10 +85,38 @@ def render_prompt(*, rules: str, observation: dict[str, Any]) -> str:
             line += f" {pending['block']['by']} blocks, claiming {pending['block']['card'].capitalize()}."
         parts.append(line)
     if observation["phase"] is not None:
-        situation = PHASE_TEXT[observation["phase"]].format(
-            actor=observation["actor"], deciding=", ".join(observation["deciding"]))
+        if you in observation["deciding"]:
+            situation = "Your decision now: " + decision_text(observation=observation)
+        else:
+            situation = PHASE_TEXT[observation["phase"]].format(
+                actor=observation["actor"], deciding=", ".join(observation["deciding"]))
         parts.append(f"It is turn {observation['turn']} of at most {observation['max_turns']}. {situation}")
     return "\n\n".join(parts)
+
+
+def decision_text(*, observation: dict[str, Any]) -> str:
+    """Exactly what the deciding player is choosing now, in words."""
+    phase, you, pending = observation["phase"], observation["you"], observation["pending"]
+    if phase == "action":
+        opponents = [p["id"] for p in observation["players"] if p["alive"] and p["id"] != you]
+        return f"it is your turn; choose one action. Opponents still in the game: {', '.join(opponents)}."
+    if phase == "lose_influence":
+        return "you lose an influence; choose which of your face-down cards to reveal."
+    if phase == "exchange":
+        return "choose which cards to keep from your face-down cards and the two you drew; the rest go back to the deck."
+    action, actor = pending["action"], pending["actor"]
+    declared = f"{actor} declared {ACTION_TEXT[action['action']].split(' (')[0]}"
+    if "target" in action:
+        declared += f" targeting {'you' if action['target'] == you else action['target']}"
+    if phase == "challenge_action":
+        card = CLAIM_CARD[action["action"]]
+        return f"{NOT_YOUR_TURN} Decide only whether to challenge {actor}'s claim to hold {card} ({declared})."
+    if phase == "block_action":
+        cards = BLOCK_CARDS[action["action"]]
+        return f"{NOT_YOUR_TURN} Decide only whether to block it ({declared}) by claiming {cards}, or to pass."
+    blocker, card = pending["block"]["by"], pending["block"]["card"].capitalize()
+    return (f"{NOT_YOUR_TURN} Decide only whether to challenge {blocker}'s claim to hold {card}, "
+            f"made to block this: {declared}.")
 
 
 def answer_request(*, legal_actions: list[Any]) -> str:

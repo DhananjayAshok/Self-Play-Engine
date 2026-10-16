@@ -28,8 +28,21 @@ Each round has one Sheriff; everyone else is a merchant. A round has four parts:
 3. Declaration. Each merchant in turn, clockwise from the Sheriff's left, declares the exact number of cards
    in their bag (the game states it) and one type of legal good. The declaration may be false, but
    contraband can never be declared.
-4. Inspection. The Sheriff chooses which bag to deal with next, one at a time. A bag that passes goes to its
-   merchant's stand: legal goods face up, contraband face down (only their number is shown).
+4. Inspection. The Sheriff chooses which bag to deal with next, one at a time. For each bag, the merchant and
+   the Sheriff talk, then the merchant makes a binding offer: an amount of gold (at most what they have), then
+   goods from their stand or their bag, added one at a time (never cards in hand). Promises made in talk are
+   not binding. The Sheriff then either takes the offer and lets the bag pass, or refuses it and inspects the
+   bag, and the offer is void. Offered goods go to the Sheriff's stand.
+   - A bag that passes goes to its merchant's stand: legal goods face up, contraband face down (only their
+     number is shown).
+   - An inspected honest bag (every card is the declared good): the Sheriff pays the merchant the penalty of
+     every good, and the goods go to the stand.
+   - An inspected lying bag: the declared goods go to the stand; every other card is confiscated and put on a
+     discard pile the Sheriff chooses, in the order he chooses; the merchant pays the Sheriff the penalty of
+     every confiscated card.
+   - A player who cannot pay a penalty in gold pays the rest with goods from their stand, one at a time:
+     legal goods first, then contraband, until the debt is covered (no change is given). If the stand runs
+     out, the rest is forgiven. The goods go to the receiver's stand.
 At the end of the round everyone draws back to 6 cards from the draw pile, and the next player clockwise
 becomes the Sheriff. When the draw pile is empty, each discard pile except its top five cards is shuffled
 into a new draw pile.
@@ -48,6 +61,12 @@ PHASE_TEXT = {
     "load": "The merchants ({deciding}) are loading their bags, one card at a time.",
     "declare": "{deciding} is declaring their bag.",
     "pick_bag": "The Sheriff {deciding} is choosing the next bag to deal with.",
+    "negotiate": "{merchant} and the Sheriff are negotiating over {merchant}'s bag; then {merchant} offers gold.",
+    "offer_goods": "{merchant} is adding goods to the offer.",
+    "decide": "The Sheriff {deciding} is deciding: take the offer and let the bag pass, or inspect it.",
+    "confiscate_pile": "The Sheriff {deciding} is choosing the discard pile for the confiscated goods.",
+    "confiscate_order": "The Sheriff {deciding} is putting the confiscated goods on the discard pile, one at a time.",
+    "pay": "{deciding} is paying the rest of a penalty with goods from their stand.",
 }
 
 
@@ -100,18 +119,38 @@ def render_prompt(*, rules: str, observation: dict[str, Any]) -> str:
     ]
     if observation["unresolved"]:
         parts.append("Bags still to be dealt with: " + ", ".join(observation["unresolved"]) + ".")
+    inspection = observation["inspection"]
+    if inspection is not None:
+        offer = inspection["offer"]
+        line = f"Being dealt with: {inspection['merchant']}'s bag. Offer so far: {offer['gold']} gold"
+        line += "".join(f", {describe(cards=offer[source])} from the {source}" for source in ("stand", "bag") if offer[source])
+        line += "."
+        if inspection["confiscated"]:
+            line += f" Confiscated, still to be placed: {describe(cards=inspection['confiscated'])}."
+        if inspection["debt"]:
+            debt = inspection["debt"]
+            line += f" {debt['payer']} still owes {debt['payee']} {debt['remaining']} gold."
+        parts.append(line)
     if observation["phase"] is not None:
-        situation = PHASE_TEXT[observation["phase"]].format(deciding=", ".join(observation["deciding"]))
+        merchant = inspection["merchant"] if inspection else None
+        situation = PHASE_TEXT[observation["phase"]].format(deciding=", ".join(observation["deciding"]), merchant=merchant)
         parts.append(f"It is round {observation['round']} of {observation['rounds']}. {situation}")
     return "\n\n".join(parts)
 
 
 def answer_request(*, legal_actions: list[Any]) -> str:
+    """The legal actions, one per line; a gold offer (every amount from 0 up) in one line."""
+    amounts = [action.get("gold") for action in legal_actions if isinstance(action, dict) and set(action) == {"gold"}]
+    if amounts and len(amounts) == len(legal_actions) and amounts == list(range(len(amounts))):
+        return (f'Your answer is your gold offer, written exactly as shown (JSON):\n- {{"gold": n}} with n a whole '
+                f"number from 0 to {amounts[-1]}")
     options = "\n".join(f"- {json.dumps(action)}" for action in legal_actions)
     return f"Your answer is one of these actions, written exactly as shown (JSON):\n{options}"
 
 
 def _normal(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key).lower(): _normal(item) for key, item in value.items()}
     return value.lower() if isinstance(value, str) else value
 
 
@@ -133,6 +172,4 @@ def parse_action(*, answer: str) -> Any:
         if word.isidentifier():
             return word
         raise ValueError("write one of the listed actions exactly, as JSON") from None
-    if isinstance(action, dict):
-        return {str(key).lower(): _normal(value) for key, value in action.items()}
     return _normal(action)

@@ -10,7 +10,7 @@ from self_play.game import THINK, DialogueMode
 from self_play.games import GAMES
 from self_play.games.sheriff import SheriffGame
 from self_play.games.sheriff.game import COUNTS, HAND_SIZE, SHERIFF_TURNS, START_GOLD, sort_goods
-from self_play.prompting import THINK_INSTRUCTION
+from self_play.prompting import TALK_INSTRUCTION, THINK_INSTRUCTION
 from self_play.runner import Runner
 
 
@@ -44,6 +44,8 @@ def full_deck(*, players):
 def all_cards(*, game):
     state = game.state
     cards = state["deck"] + state["discards"][0] + state["discards"][1] + state["market"]["set_aside"]
+    if state["inspection"]:
+        cards += state["inspection"]["confiscated"]
     for pid in game.player_ids:
         cards += state["hands"][pid] + state["bags"][pid] + state["stand_legal"][pid] + state["stand_contraband"][pid]
     return Counter(cards)
@@ -54,6 +56,7 @@ def set_sheriff(*, game, sheriff):
     game.state["sheriff"] = sheriff
     game.state["sheriffs"] = [sheriff]
     game.state["market"] = game._new_market(merchants=game.merchants())
+    game.state["log"] = [f"The game begins. Round 1 of {game.state['rounds']}: {sheriff} is the Sheriff."]
 
 
 def swap_cards(*, game, hands):
@@ -69,7 +72,7 @@ def swap_cards(*, game, hands):
 
 def table(*, players=3, sheriff="p1", hands=None, **settings):
     """A game with this Sheriff and these hands, after the opening thinking."""
-    game = new_game(players=players, talk_rounds=0, **settings)
+    game = new_game(players=players, **{"talk_rounds": 0, **settings})
     set_sheriff(game=game, sheriff=sheriff)
     swap_cards(game=game, hands=hands or {})
     think_all(game=game)
@@ -100,15 +103,34 @@ def declare_all(*, game, goods):
 
 
 def play(*, game, choose, check=None):
-    """Play to the end; `choose(legal)` picks each action, `check()` runs after every step."""
+    """Play to the end; `choose(legal)` picks each action, `check()` runs after every step. Like
+    the runner, a player is asked only while the phase it was eligible in is still open."""
     while (phase := game.get_dialogue_phase()) is not None:
         assert phase.eligible
         for player_id in phase.eligible:
+            now = game.get_dialogue_phase()
+            if now is None or now.phase_id != phase.phase_id or player_id not in now.eligible:
+                continue  # e.g. the Sheriff in a negotiation: the merchant's offer closed it
             legal = game.get_legal_actions(player_id=player_id)
             assert legal and len(legal) == len({json.dumps(option) for option in legal})
             assert game.step(player_id=player_id, action=choose(legal)).accepted
             if check:
                 check()
+
+
+def offer(*, game, merchant, gold=0, goods=()):
+    """The Sheriff takes up `merchant`'s bag, and the merchant offers this gold and these
+    goods ((source, good) pairs); the game then waits for the Sheriff's decision."""
+    sheriff = game.state["sheriff"]
+    act(game=game, moves=[(sheriff, {"bag": merchant})])
+    think_all(game=game)
+    act(game=game, moves=[(merchant, {"gold": gold})] + [(merchant, {"add": {"from": source, "good": good}})
+                                                          for source, good in goods] + [(merchant, "done")])
+
+
+def pass_bag(*, game, merchant, gold=0, goods=()):
+    offer(game=game, merchant=merchant, gold=gold, goods=goods)
+    act(game=game, moves=[(game.state["sheriff"], "pass")])
 
 
 def reply(*, answer):
@@ -274,16 +296,26 @@ def test_declarations_name_one_legal_type_true_type_first_and_the_game_adds_the_
         {"declare": "bread"}, {"declare": "apples"}, {"declare": "cheese"}, {"declare": "chickens"}]
 
 
-# --- inspection (this step: every bag passes) -------------------------------------------
+# --- inspection -------------------------------------------------------------------------
 
 
-def four_bags():
+def four_bags(**settings):
+    """p1 is Sheriff. p2 lies (Apples and Silk, declared Apples), p3 is honest (one Cheese),
+    p4 lies (Chickens and two Pepper, declared Chickens)."""
     game = table(players=4, hands={"p2": ["apples", "silk", "cheese", "cheese", "cheese", "cheese"],
-                                   "p3": ["cheese"] * 6, "p4": ["chickens", "pepper", "pepper", "apples", "apples", "apples"]})
+                                   "p3": ["cheese"] * 6, "p4": ["chickens", "pepper", "pepper", "apples", "apples", "apples"]},
+                 **settings)
     skip_market(game=game)
     load_bags(game=game, bags={"p2": ["apples", "silk"], "p3": ["cheese"], "p4": ["chickens", "pepper", "pepper"]})
     declare_all(game=game, goods={"p2": "apples", "p3": "cheese", "p4": "chickens"})
     return game
+
+
+def from_deck(*, game, cards):
+    """Take these cards out of the draw pile, so a test can put them in a stand."""
+    for card in cards:
+        game.state["deck"].remove(card)
+    return list(cards)
 
 
 def test_the_sheriff_chooses_the_order_and_a_passed_bag_goes_to_the_stand():
@@ -291,20 +323,164 @@ def test_the_sheriff_chooses_the_order_and_a_passed_bag_goes_to_the_stand():
     phase = current(game=game)
     assert (phase.phase, phase.mode, phase.eligible) == ("pick_bag", DialogueMode.ACTION, ("p1",))
     assert game.get_legal_actions(player_id="p1") == [{"bag": "p2"}, {"bag": "p3"}, {"bag": "p4"}]
-    act(game=game, moves=[("p1", {"bag": "p4"})])
+    pass_bag(game=game, merchant="p4")
     assert game.state["stand_legal"]["p4"] == ["chickens"]
     assert game.state["stand_contraband"]["p4"] == ["pepper", "pepper"]
     seen = game.get_observation(player_id="p2")["players"][3]
     assert (seen["stand"], seen["contraband"]) == ({"chickens": 1}, 2)  # contraband: only the number
     assert game.get_legal_actions(player_id="p1") == [{"bag": "p2"}, {"bag": "p3"}]
-    act(game=game, moves=[("p1", {"bag": "p3"})])
+    pass_bag(game=game, merchant="p3")
     assert game.get_legal_actions(player_id="p1") == [{"bag": "p2"}]  # one bag left: the runner plays it
+
+
+def test_merchant_and_sheriff_talk_then_the_merchant_offers_gold_then_goods_then_the_sheriff_decides():
+    game = four_bags(talk_rounds=2)
+    act(game=game, moves=[("p1", {"bag": "p2"})])
+    phase = current(game=game)
+    assert (phase.phase, phase.mode, phase.eligible, phase.talk_rounds) == ("negotiate", DialogueMode.DISCUSSION, ("p2", "p1"), 2)
+    legal = game.get_legal_actions(player_id="p2")
+    assert legal == [{"gold": n} for n in range(51)]  # never more than the merchant has
+    assert game.get_legal_actions(player_id="p1") == []  # the Sheriff talks here but does not act
+    request = game.render_answer_request(legal_actions=legal)
+    assert '{"gold": n}' in request and "from 0 to 50" in request and '{"gold": 7}' not in request
+    assert not game.step(player_id="p2", action={"gold": 51}).accepted
+    act(game=game, moves=[("p2", {"gold": 5})])
+    phase = current(game=game)
+    assert (phase.phase, phase.mode, phase.eligible, phase.talk_rounds) == ("offer_goods", DialogueMode.ACTION, ("p2",), 0)
+    assert game.get_legal_actions(player_id="p2") == [  # its stand is empty; never cards in hand
+        "done", {"add": {"from": "bag", "good": "apples"}}, {"add": {"from": "bag", "good": "silk"}}]
+    act(game=game, moves=[("p2", {"add": {"from": "bag", "good": "silk"}})])
+    assert game.get_legal_actions(player_id="p2") == ["done", {"add": {"from": "bag", "good": "apples"}}]
+    act(game=game, moves=[("p2", "done")])
+    phase = current(game=game)
+    assert (phase.phase, phase.mode, phase.eligible, phase.talk_rounds) == ("decide", DialogueMode.ACTION, ("p1",), 0)
+    assert game.get_legal_actions(player_id="p1") == ["pass", "inspect"]
+    assert game.get_observation(player_id="p3")["inspection"]["offer"] == {"gold": 5, "stand": [], "bag": ["silk"]}
+
+
+def test_taking_an_offer_moves_its_gold_and_goods_to_the_sheriff_and_the_rest_of_the_bag_passes():
+    game = four_bags()
+    game.state["stand_legal"]["p2"] = from_deck(game=game, cards=["cheese"])
+    game.state["stand_contraband"]["p2"] = from_deck(game=game, cards=["mead"])
+    pass_bag(game=game, merchant="p2", gold=7,
+             goods=[("stand", "cheese"), ("stand", "mead"), ("bag", "silk")])
+    state = game.state
+    assert (state["gold"]["p2"], state["gold"]["p1"]) == (43, 57)
+    assert (state["stand_legal"]["p1"], state["stand_contraband"]["p1"]) == (["cheese"], ["mead", "silk"])
+    assert (state["stand_legal"]["p2"], state["stand_contraband"]["p2"], state["bags"]["p2"]) == (["apples"], [], [])
+    assert all_cards(game=game) == full_deck(players=4)
+
+
+def test_an_inspected_honest_bag_costs_the_sheriff_its_penalties_and_the_offer_is_void():
+    game = four_bags()
+    offer(game=game, merchant="p3", gold=4)
+    events = game.step(player_id="p1", action="inspect").public_events
+    assert events[0] == "p1 refuses the offer and inspects p3's bag: 1 Cheese."
+    assert game.state["stand_legal"]["p3"] == ["cheese"]
+    assert (game.state["gold"]["p1"], game.state["gold"]["p3"]) == (48, 52)  # the penalty, not the offer
+    assert game.state["inspection"] is None and current(game=game).phase == "pick_bag"
+
+
+def test_an_inspected_lying_bag_keeps_the_declared_goods_and_the_sheriff_places_the_rest():
+    game = four_bags()
+    offer(game=game, merchant="p4", gold=3)
+    act(game=game, moves=[("p1", "inspect")])
+    assert game.state["stand_legal"]["p4"] == ["chickens"]  # the declared goods
+    phase = current(game=game)
+    assert (phase.phase, phase.eligible) == ("confiscate_pile", ("p1",))
+    assert game.get_legal_actions(player_id="p1") == [{"pile": 1}, {"pile": 2}]
+    act(game=game, moves=[("p1", {"pile": 2})])  # one good: placed without asking
+    assert game.state["discards"][1][-2:] == ["pepper", "pepper"]
+    assert (game.state["gold"]["p4"], game.state["gold"]["p1"]) == (42, 58)  # 2 x 4 in penalties
+    assert all_cards(game=game) == full_deck(players=4)
+
+
+def lying_bag(*, bag, declared, gold=50, legal=(), contraband=()):
+    """3 players, p1 Sheriff: p2 loads `bag` and declares `declared`, with this gold and stand."""
+    game = table(hands={"p2": list(bag) + ["apples"] * (6 - len(bag))})
+    skip_market(game=game)
+    load_bags(game=game, bags={"p2": list(bag), "p3": [game.state["hands"]["p3"][0]]})
+    act(game=game, moves=[("p2", {"declare": declared})])
+    act(game=game, moves=[("p3", game.get_legal_actions(player_id="p3")[0])])
+    game.state["gold"]["p2"] = gold
+    game.state["stand_legal"]["p2"] = from_deck(game=game, cards=legal)
+    game.state["stand_contraband"]["p2"] = from_deck(game=game, cards=contraband)
+    offer(game=game, merchant="p2")
+    act(game=game, moves=[("p1", "inspect")])
+    if len(set(bag) - {declared}) == 1:
+        act(game=game, moves=[("p1", {"pile": 1})])  # one good confiscated: it goes on pile 1 by itself
+    return game
+
+
+def test_the_sheriff_chooses_the_order_of_confiscated_goods_and_the_last_is_on_top():
+    game = lying_bag(bag=["cheese", "silk", "mead"], declared="apples")
+    act(game=game, moves=[("p1", {"pile": 1})])
+    assert game.get_legal_actions(player_id="p1") == [{"place": "cheese"}, {"place": "mead"}, {"place": "silk"}]
+    act(game=game, moves=[("p1", {"place": "mead"}), ("p1", {"place": "silk"})])  # Cheese, the last, goes by itself
+    assert game.state["discards"][0][-3:] == ["mead", "silk", "cheese"]
+    assert game.state["gold"]["p2"] == 50 - (2 + 4 + 4)
+
+
+def test_a_player_short_of_gold_pays_with_legal_goods_first_cheapest_first_and_gets_no_change():
+    game = lying_bag(bag=["silk"], declared="apples", gold=1, legal=["chickens", "apples", "apples"],
+                     contraband=["crossbow"])
+    phase = current(game=game)
+    assert (phase.phase, phase.eligible) == ("pay", ("p2",))  # 1 gold paid, 3 still owed
+    assert game.state["inspection"]["debt"] == {"payer": "p2", "payee": "p1", "remaining": 3}
+    assert game.get_legal_actions(player_id="p2") == [{"pay": "apples"}, {"pay": "chickens"}]  # no contraband yet
+    act(game=game, moves=[("p2", {"pay": "chickens"})])  # worth 4: covers 3, no change
+    assert game.state["stand_legal"]["p1"] == ["chickens"]
+    assert game.state["stand_legal"]["p2"] == ["apples", "apples"] and game.state["stand_contraband"]["p2"] == ["crossbow"]
+    assert (game.state["gold"]["p2"], game.state["gold"]["p1"]) == (0, 51)
+    assert current(game=game).phase == "pick_bag"
+
+
+def test_contraband_pays_only_once_no_legal_goods_are_left():
+    game = lying_bag(bag=["silk"], declared="apples", gold=0, legal=["apples"], contraband=["crossbow", "pepper"])
+    act(game=game, moves=[("p2", {"pay": "apples"})])  # 2 of the 4
+    assert game.get_legal_actions(player_id="p2") == [{"pay": "pepper"}, {"pay": "crossbow"}]
+    act(game=game, moves=[("p2", {"pay": "pepper"})])
+    assert game.state["stand_contraband"]["p1"] == ["pepper"] and game.state["stand_contraband"]["p2"] == ["crossbow"]
+
+
+def test_the_rest_of_a_debt_is_forgiven_once_the_stand_is_empty():
+    game = lying_bag(bag=["silk"], declared="apples", gold=0, legal=["apples"])
+    events = game.step(player_id="p2", action={"pay": "apples"}).public_events
+    assert "p2's stand is empty: the remaining 2 gold is forgiven." in events
+    assert game.state["inspection"] is None and game.state["gold"]["p2"] == 0
+
+
+def test_a_sheriff_short_of_gold_pays_an_honest_merchant_with_goods_too():
+    game = table(hands={"p2": ["cheese"] * 6})
+    skip_market(game=game)
+    load_bags(game=game, bags={"p2": ["cheese"] * 3, "p3": [game.state["hands"]["p3"][0]]})
+    act(game=game, moves=[("p2", {"declare": "cheese"})])
+    act(game=game, moves=[("p3", game.get_legal_actions(player_id="p3")[0])])
+    game.state["gold"]["p1"] = 1
+    game.state["stand_legal"]["p1"] = from_deck(game=game, cards=["chickens", "chickens"])
+    offer(game=game, merchant="p2")
+    act(game=game, moves=[("p1", "inspect")])  # owes 3 x 2 = 6: pays 1 gold, then goods
+    assert (current(game=game).phase, current(game=game).eligible) == ("pay", ("p1",))
+    act(game=game, moves=[("p1", {"pay": "chickens"}), ("p1", {"pay": "chickens"})])  # 4 + 4 covers 5
+    assert game.state["stand_legal"]["p2"] == ["cheese"] * 3 + ["chickens"] * 2
+
+
+def test_thinking_deal_asks_the_merchant_and_the_sheriff_before_each_negotiation():
+    for thinking, expected in [("deal", ("p1", "p3")), ("round", None)]:
+        game = four_bags(thinking=thinking)
+        act(game=game, moves=[("p1", {"bag": "p3"})])
+        phase = game.get_dialogue_phase()
+        if expected:
+            assert (phase.mode, phase.eligible) == (DialogueMode.THINKING, expected)
+        else:
+            assert phase.phase == "negotiate"
 
 
 def test_after_the_last_bag_everyone_draws_back_to_six_the_sheriff_passes_left_and_everyone_thinks():
     game = four_bags()
     deck_before = len(game.state["deck"])
-    act(game=game, moves=[("p1", {"bag": "p2"}), ("p1", {"bag": "p3"}), ("p1", {"bag": "p4"})])
+    for merchant in ("p2", "p3", "p4"):
+        pass_bag(game=game, merchant=merchant)
     state = game.state
     assert all(len(state["hands"][pid]) == HAND_SIZE for pid in game.player_ids)
     assert len(state["deck"]) == deck_before - 6  # the three bags held 2, 1 and 3 cards
@@ -510,7 +686,7 @@ def test_no_hidden_card_appears_in_another_players_observation_or_prompt():
 def test_the_observation_has_exactly_the_designed_fields():
     observation = new_game().get_observation(player_id="p1")
     assert set(observation) == {"you", "your_hand", "your_set_aside", "your_bag", "your_contraband", "players",
-                                "round", "rounds", "sheriff", "draw_pile", "discard_piles", "unresolved", "phase",
+                                "round", "rounds", "sheriff", "draw_pile", "discard_piles", "unresolved", "inspection", "phase",
                                 "deciding", "log", "winners"}
     assert set(observation["players"][0]) == {"id", "gold", "hand_size", "set_aside", "stand", "contraband", "declared"}
 
@@ -579,21 +755,30 @@ class FirstOptionModel(ChatModel):
         text = messages[-1]["content"]
         if THINK_INSTRUCTION in text:
             return reply(answer="plan")
-        menu = text.split("written exactly as shown (JSON):\n")[1]
-        return reply(answer=menu.splitlines()[0][2:])
+        if TALK_INSTRUCTION in text:
+            return reply(answer="A fair bag.")
+        first = text.split("written exactly as shown (JSON):\n")[1].splitlines()[0][2:]
+        return reply(answer='{"gold": 0}' if first.startswith('{"gold": n}') else first)
 
 
 def test_a_three_player_game_through_the_runner_asks_only_real_choices():
-    """Every merchant keeps its hand, loads one honest card then "done", and declares truly;
-    the Sheriff takes the bags clockwise. Per round: 3 thinking calls (the opening for round
-    1), 2 Market, 4 loading, 2 declaring and 1 bag pick (the last bag is forced): 12 x 9."""
+    """Every merchant keeps its hand, loads one honest card then "done", declares truly,
+    offers nothing, and the Sheriff takes the bags clockwise and lets them pass. Per round:
+    3 thinking calls (the opening for round 1), 2 Market, 4 loading, 2 declaring, 1 bag pick
+    (the last bag is forced), and per bag 4 talk calls (2 rounds x merchant and Sheriff), the
+    gold offer, "done" and the decision: 12 + 2 x 7 = 26 calls, 9 rounds."""
     game = new_game(seed=1, players=3)
     models = {pid: FirstOptionModel() for pid in game.player_ids}
     runner = Runner(game=game, models=models)
     result = asyncio.run(runner.run())
     assert result["outcome"]["done"] and result["invalid"] == {pid: 0 for pid in game.player_ids}
-    assert sum(len(model.calls) for model in models.values()) == 12 * 9
+    assert sum(len(model.calls) for model in models.values()) == 26 * 9
     loads = [e for e in runner.record if e["kind"] == "phase" and e["phase"] == "load"]
     assert loads and all(e["mode"] == "simultaneous" and game.state["sheriffs"][0] not in e["eligible"]
                          for e in loads[:2])
+    negotiations = {e["phase_id"]: e["eligible"] for e in runner.record if e["kind"] == "phase" and e["phase"] == "negotiate"}
+    assert len(negotiations) == 2 * 9
+    for phase_id, (merchant, sheriff) in negotiations.items():
+        calls = [(e["player_id"], e["call"]) for e in runner.record if e["kind"] == "call" and e["phase_id"] == phase_id]
+        assert calls == [(merchant, "talk"), (sheriff, "talk")] * 2 + [(merchant, "answer")]  # the Sheriff never acts here
     assert len(result["step_rewards"]) == len(game.steps)

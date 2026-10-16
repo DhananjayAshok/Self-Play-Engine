@@ -15,17 +15,24 @@ legal list is long:
     load           SIMULTANEOUS  merchants loading    one card at a time, then "done"
     declare        ACTION        each merchant        one legal type; the game adds the count
     pick_bag       ACTION        the Sheriff          the next bag to deal with
+    negotiate      DISCUSSION    merchant, Sheriff    talk, then the merchant's gold offer
+    offer_goods    ACTION        the merchant         goods added one at a time, then "done"
+    decide         ACTION        the Sheriff          "pass" (take the offer) or "inspect"
+    confiscate_pile  ACTION      the Sheriff          the pile confiscated goods go on
+    confiscate_order ACTION      the Sheriff          one card at a time; the last is the top
+    pay            ACTION        a player short of gold  stand goods one at a time
 
-This step: the Sheriff lets every bag pass. Negotiation, offers, inspection, confiscation and
-paying short come next.
+In `negotiate` both talk, but only the merchant acts: its offer opens the next phase, so the
+runner never asks the Sheriff for an action there.
 
 `state["stage"]` is the part of the round being played: "market", "load", "declare" or
-"inspect". A load phase stays open (same phase_id) until every merchant still loading has
-answered for this card; every other action opens a new phase.
+"inspect"; `state["inspection"]` is the bag being dealt with and its `step`, or None while
+the Sheriff picks the next bag. A load phase stays open (same phase_id) until every merchant
+still loading has answered for this card; every other action opens a new phase.
 
 Thinking: everyone thinks once at the opening (every game's start) and again at the start
-of every later round. game_config "thinking" = "deal" will also ask the merchant and the
-Sheriff before each negotiation; until negotiation exists it behaves like "round".
+of every later round. game_config "thinking" = "deal" also asks the merchant and the Sheriff
+before each negotiation.
 """
 
 from collections import Counter
@@ -130,6 +137,7 @@ class SheriffGame(Game):
             "declarations": {pid: None for pid in ids},    # {"good", "count"} once declared
             "to_declare": [],
             "unresolved": [],          # bags the Sheriff has not dealt with, clockwise
+            "inspection": None,        # the bag being dealt with, see `_new_inspection`
             "phase_counter": 0,
             "log": [f"The game begins. Round 1 of {rounds}: {sheriff} is the Sheriff."],
         }
@@ -148,6 +156,13 @@ class SheriffGame(Game):
     @staticmethod
     def _new_market(*, merchants: list[str]) -> dict[str, Any]:
         return {"merchants": merchants, "step": "set_aside", "set_aside": [], "pile": None, "deck_drawn": False}
+
+    @staticmethod
+    def _new_inspection(*, merchant: str) -> dict[str, Any]:
+        """The bag being dealt with. Everything in it is public: the offer (gold and goods named),
+        the confiscated goods and the debt still owed."""
+        return {"merchant": merchant, "step": "negotiate", "offer": {"gold": 0, "stand": [], "bag": []},
+                "confiscated": [], "pile": None, "debt": None}
 
     def merchants(self) -> list[str]:
         """This round's merchants, clockwise from the Sheriff's left."""
@@ -199,7 +214,15 @@ class SheriffGame(Game):
         if stage == "declare":
             return DialoguePhase(phase_id=phase_id, phase="declare", mode=DialogueMode.ACTION,
                                  eligible=(state["to_declare"][0],))
-        return DialoguePhase(phase_id=phase_id, phase="pick_bag", mode=DialogueMode.ACTION, eligible=(state["sheriff"],))
+        sheriff, inspection = state["sheriff"], state["inspection"]
+        if inspection is None:
+            return DialoguePhase(phase_id=phase_id, phase="pick_bag", mode=DialogueMode.ACTION, eligible=(sheriff,))
+        step, merchant = inspection["step"], inspection["merchant"]
+        if step == "negotiate":
+            return DialoguePhase(phase_id=phase_id, phase="negotiate", mode=DialogueMode.DISCUSSION,
+                                 eligible=(merchant, sheriff), talk_rounds=self.setting(key="talk_rounds"))
+        actor = {"offer_goods": merchant, "pay": (inspection["debt"] or {}).get("payer")}.get(step, sheriff)
+        return DialoguePhase(phase_id=phase_id, phase=step, mode=DialogueMode.ACTION, eligible=(actor,))
 
     def _get_legal_actions(self, *, player_id: str) -> list[Any]:
         # The first listed action is the honest or do-nothing one: the runner's fallback.
@@ -225,7 +248,35 @@ class SheriffGame(Game):
             types = [good for good in LEGAL if deck_counts(players=len(self.player_ids))[good]]
             true = [good for good in honest_order(cards=state["bags"][player_id]) if good in LEGAL][:1]
             return [{"declare": good} for good in true + [good for good in types if good not in true]]
-        return [{"bag": pid} for pid in state["unresolved"]]
+        if phase.phase == "pick_bag":
+            return [{"bag": pid} for pid in state["unresolved"]]
+        inspection = state["inspection"]
+        if phase.phase == "negotiate":  # the Sheriff talks here but does not act
+            return [{"gold": n} for n in range(state["gold"][player_id] + 1)] if player_id == inspection["merchant"] else []
+        if phase.phase == "offer_goods":
+            return ["done"] + [{"add": {"from": source, "good": good}} for source in ("stand", "bag")
+                               for good in distinct(cards=self._offerable(source=source))]
+        if phase.phase == "decide":
+            return ["pass", "inspect"]
+        if phase.phase == "confiscate_pile":
+            return [{"pile": 1}, {"pile": 2}]
+        if phase.phase == "confiscate_order":
+            return [{"place": good} for good in distinct(cards=inspection["confiscated"])]
+        return [{"pay": good} for good in self._payable(player_id=player_id)]
+
+    def _offerable(self, *, source: str) -> list[str]:
+        """The merchant's goods in its stand or bag not yet in the offer."""
+        state, inspection = self.state, self.state["inspection"]
+        merchant = inspection["merchant"]
+        cards = (state["stand_legal"][merchant] + state["stand_contraband"][merchant] if source == "stand"
+                 else state["bags"][merchant])
+        return list((Counter(cards) - Counter(inspection["offer"][source])).elements())
+
+    def _payable(self, *, player_id: str) -> list[str]:
+        """The goods a player short of gold may give: legal goods while it has any, then
+        contraband; each good once, the cheapest first (ties in GOODS order)."""
+        stand = self.state["stand_legal"][player_id] or self.state["stand_contraband"][player_id]
+        return sorted(distinct(cards=stand), key=lambda good: GOODS[good][0])
 
     def _draw_sources(self) -> list[dict[str, str]]:
         """The draw pile first; the discard piles with cards, until the draw pile is used."""
@@ -238,8 +289,9 @@ class SheriffGame(Game):
     def get_observation(self, *, player_id: str) -> dict[str, Any]:
         """Public: gold, hand sizes, the number of set-aside cards, every stand's legal goods
         and its number of contraband, declarations, the bags still to be dealt with, the
-        draw pile's size, each discard pile's top card and size, the round, the Sheriff, who
-        is deciding and the log. Private: this player's hand, set-aside cards, bag and
+        draw pile's size, each discard pile's top card and size, the bag being dealt with (its
+        offer, with every offered good named, confiscated goods and the debt still owed), the
+        round, the Sheriff, who is deciding and the log. Private: this player's hand, set-aside cards, bag and
         face-down contraband. Never another player's hand, set-aside cards, bag or face-down
         contraband, nor the draw pile's order. While bags are loaded, everyone loading is
         shown as deciding until all are done, so nobody learns when another bag closed."""
@@ -273,10 +325,23 @@ class SheriffGame(Game):
             "draw_pile": len(state["deck"]),
             "discard_piles": [{"top": pile[-1] if pile else None, "size": len(pile)} for pile in state["discards"]],
             "unresolved": list(state["unresolved"]) if state["stage"] == "inspect" else [],
+            "inspection": self._public_inspection(),
             "phase": phase.phase if phase else None,
             "deciding": deciding,
             "log": list(state["log"]),
             "winners": self.get_outcome()["winners"],
+        }
+
+    def _public_inspection(self) -> dict[str, Any] | None:
+        inspection = self.state["inspection"]
+        if inspection is None or self.done:
+            return None
+        offer = inspection["offer"]
+        return {
+            "merchant": inspection["merchant"],
+            "offer": {"gold": offer["gold"], "stand": sort_goods(cards=offer["stand"]), "bag": sort_goods(cards=offer["bag"])},
+            "confiscated": sort_goods(cards=inspection["confiscated"]),
+            "debt": dict(inspection["debt"]) if inspection["debt"] else None,
         }
 
     # --- scoring -----------------------------------------------------------------
@@ -357,19 +422,24 @@ class SheriffGame(Game):
             self._set_aside(player_id=player_id, action=action, events=events)
         elif phase == "draw":
             self._draw(player_id=player_id, source=action["draw"], events=events)
-        elif phase == "discard_pile":
-            self.state["market"]["pile"] = action["pile"]
-            self.state["market"]["step"] = "discard_order"
-            self._place_rest(player_id=player_id, events=events)
-        elif phase == "discard_order":
-            self._place(player_id=player_id, good=action["place"], events=events)
-            self._place_rest(player_id=player_id, events=events)
+        elif phase in ("discard_pile", "discard_order"):
+            self._market_discard(player_id=player_id, action=action, events=events)
         elif phase == "load":
             self._load(player_id=player_id, action=action, events=events)
         elif phase == "declare":
             self._declare(player_id=player_id, good=action["declare"], events=events)
-        else:
+        elif phase == "pick_bag":
             self._pick_bag(merchant=action["bag"], events=events)
+        elif phase == "negotiate":
+            self._offer_gold(player_id=player_id, gold=action["gold"], events=events)
+        elif phase == "offer_goods":
+            self._offer_goods(player_id=player_id, action=action, events=events)
+        elif phase == "decide":
+            self._decide(action=action, events=events)
+        elif phase in ("confiscate_pile", "confiscate_order"):
+            self._confiscate(player_id=player_id, action=action, events=events)
+        else:
+            self._pay_good(good=action["pay"], events=events)
         # A load phase stays open until everyone still loading has answered for this card.
         if not (self.state["stage"] == "load" and self.state["answered"]):
             self.state["phase_counter"] += 1
@@ -411,20 +481,26 @@ class SheriffGame(Game):
         if len(self.state["hands"][player_id]) >= HAND_SIZE or not self._draw_sources():
             self.state["market"]["step"] = "discard_pile"
 
-    def _place(self, *, player_id: str, good: str, events: list[str]) -> None:
+    def _market_discard(self, *, player_id: str, action: Any, events: list[str]) -> None:
         market = self.state["market"]
-        market["set_aside"].remove(good)
-        self.state["discards"][market["pile"] - 1].append(good)
-        events.append(f"{player_id} puts {NAMES[good]} on discard pile {market['pile']}.")
-
-    def _place_rest(self, *, player_id: str, events: list[str]) -> None:
-        """When only one good is left to place, its order is no choice: place it all."""
-        market = self.state["market"]
-        if len(distinct(cards=market["set_aside"])) == 1:
-            while market["set_aside"]:
-                self._place(player_id=player_id, good=market["set_aside"][0], events=events)
-        if not market["set_aside"]:
+        if "pile" in action:
+            market["pile"], market["step"] = action["pile"], "discard_order"
+        if self._place_cards(player_id=player_id, cards=market["set_aside"], pile=market["pile"],
+                             good=action.get("place"), events=events):
             self._next_market(events=events)
+
+    def _place_cards(self, *, player_id: str, cards: list[str], pile: int, good: str | None, events: list[str]) -> bool:
+        """Put `good` (if given) from `cards` on top of the discard pile; then, when only one good
+        is left, its order is no choice, so place it all. True once `cards` is empty."""
+        placing = [good] if good else []
+        rest = list((Counter(cards) - Counter(placing)).elements())
+        if len(distinct(cards=rest)) == 1:
+            placing += rest
+        for card in placing:
+            cards.remove(card)
+            self.state["discards"][pile - 1].append(card)
+            events.append(f"{player_id} puts {NAMES[card]} on discard pile {pile}.")
+        return not cards
 
     def _next_market(self, *, events: list[str]) -> None:
         rest = self.state["market"]["merchants"][1:]
@@ -486,22 +562,128 @@ class SheriffGame(Game):
 
     def _pick_bag(self, *, merchant: str, events: list[str]) -> None:
         self.state["unresolved"].remove(merchant)
+        self.state["inspection"] = self._new_inspection(merchant=merchant)
         events.append(f"The Sheriff {self.state['sheriff']} takes up {merchant}'s bag.")
-        self._pass_bag(merchant=merchant, events=events)
-        if not self.state["unresolved"]:
-            self._end_round(events=events)
+        if self.setting(key="thinking") == "deal":
+            self.request_thinking(player_ids=[merchant, self.state["sheriff"]])
+
+    def _offer_gold(self, *, player_id: str, gold: int, events: list[str]) -> None:
+        self.state["inspection"]["offer"]["gold"] = gold
+        self.state["inspection"]["step"] = "offer_goods"
+        events.append(f"{player_id} offers {gold} gold.")
+
+    def _offer_goods(self, *, player_id: str, action: Any, events: list[str]) -> None:
+        inspection = self.state["inspection"]
+        if action == "done":
+            inspection["step"] = "decide"
+            events.append(f"{player_id}'s offer: {self._describe_offer()}.")
+            return
+        source, good = action["add"]["from"], action["add"]["good"]
+        inspection["offer"][source].append(good)
+        events.append(f"{player_id} adds {NAMES[good]} from their {source} to the offer.")
+
+    def _describe_offer(self) -> str:
+        offer = self.state["inspection"]["offer"]
+        parts = [f"{offer['gold']} gold"]
+        parts += [f"{describe(cards=offer[source])} from the {source}" for source in ("stand", "bag") if offer[source]]
+        return ", ".join(parts)
+
+    def _decide(self, *, action: str, events: list[str]) -> None:
+        state, inspection = self.state, self.state["inspection"]
+        sheriff, merchant = state["sheriff"], inspection["merchant"]
+        if action == "pass":
+            offer = inspection["offer"]
+            state["gold"][merchant] -= offer["gold"]
+            state["gold"][sheriff] += offer["gold"]
+            for good in offer["stand"]:
+                stand = state["stand_legal" if good in LEGAL else "stand_contraband"][merchant]
+                stand.remove(good)
+                self._to_stand(player_id=sheriff, cards=[good])
+            for good in offer["bag"]:
+                state["bags"][merchant].remove(good)
+            self._to_stand(player_id=sheriff, cards=offer["bag"])
+            events.append(f"{sheriff} takes {merchant}'s offer ({self._describe_offer()}) and lets the bag pass.")
+            self._pass_bag(merchant=merchant, events=events)
+            self._finish_bag(events=events)
+            return
+        bag, declared = state["bags"][merchant], state["declarations"][merchant]["good"]
+        events.append(f"{sheriff} refuses the offer and inspects {merchant}'s bag: {describe(cards=bag)}.")
+        truthful = [card for card in bag if card == declared]
+        others = [card for card in bag if card != declared]
+        self._to_stand(player_id=merchant, cards=truthful)
+        state["bags"][merchant] = []
+        if not others:
+            amount = GOODS[declared][1] * len(truthful)
+            events.append(f"The bag is honest: {sheriff} owes {merchant} {amount} gold in penalties.")
+            inspection["debt"] = {"payer": sheriff, "payee": merchant, "remaining": amount}
+            self._pay_gold(events=events)
+            return
+        amount = sum(GOODS[card][1] for card in others)
+        events.append(f"{merchant} lied: {describe(cards=truthful)} go to the stand, {describe(cards=others)} "
+                      f"are confiscated, and {merchant} owes {sheriff} {amount} gold in penalties.")
+        inspection["confiscated"] = others
+        inspection["debt"] = {"payer": merchant, "payee": sheriff, "remaining": amount}
+        inspection["step"] = "confiscate_pile"
+
+    def _confiscate(self, *, player_id: str, action: Any, events: list[str]) -> None:
+        inspection = self.state["inspection"]
+        if "pile" in action:
+            inspection["pile"], inspection["step"] = action["pile"], "confiscate_order"
+        if self._place_cards(player_id=player_id, cards=inspection["confiscated"], pile=inspection["pile"],
+                             good=action.get("place"), events=events):
+            self._pay_gold(events=events)
+
+    def _pay_gold(self, *, events: list[str]) -> None:
+        """Pay the debt in gold, as far as it goes; the rest is paid in goods from the stand."""
+        state, debt = self.state, self.state["inspection"]["debt"]
+        payer, payee = debt["payer"], debt["payee"]
+        paid = min(state["gold"][payer], debt["remaining"])
+        state["gold"][payer] -= paid
+        state["gold"][payee] += paid
+        debt["remaining"] -= paid
+        events.append(f"{payer} pays {payee} {paid} gold.")
+        if debt["remaining"]:
+            events.append(f"{payer} is {debt['remaining']} gold short and pays with goods from their stand.")
+        self._settle(events=events)
+
+    def _pay_good(self, *, good: str, events: list[str]) -> None:
+        state, debt = self.state, self.state["inspection"]["debt"]
+        payer, payee = debt["payer"], debt["payee"]
+        state["stand_legal" if good in LEGAL else "stand_contraband"][payer].remove(good)
+        self._to_stand(player_id=payee, cards=[good])
+        debt["remaining"] = max(0, debt["remaining"] - GOODS[good][0])
+        events.append(f"{payer} gives {payee} {NAMES[good]} (worth {GOODS[good][0]}) from their stand.")
+        self._settle(events=events)
+
+    def _settle(self, *, events: list[str]) -> None:
+        """The debt is paid once covered (no change is given) or once the payer's stand is empty
+        (the rest is forgiven); until then the payer gives another good."""
+        state, debt = self.state, self.state["inspection"]["debt"]
+        if debt["remaining"] and self._payable(player_id=debt["payer"]):
+            state["inspection"]["step"] = "pay"
+            return
+        if debt["remaining"]:
+            events.append(f"{debt['payer']}'s stand is empty: the remaining {debt['remaining']} gold is forgiven.")
+        self._finish_bag(events=events)
+
+    def _to_stand(self, *, player_id: str, cards: list[str]) -> None:
+        self.state["stand_legal"][player_id] += [card for card in cards if card in LEGAL]
+        self.state["stand_contraband"][player_id] += [card for card in cards if card in CONTRABAND]
 
     def _pass_bag(self, *, merchant: str, events: list[str]) -> None:
-        """A bag that passes: legal goods face up, contraband face down in the stand."""
+        """What is left in a bag that passes: legal goods face up, contraband face down."""
         state = self.state
         bag = state["bags"][merchant]
         legal = [card for card in bag if card in LEGAL]
-        contraband = [card for card in bag if card in CONTRABAND]
-        state["stand_legal"][merchant] += legal
-        state["stand_contraband"][merchant] += contraband
+        self._to_stand(player_id=merchant, cards=bag)
         state["bags"][merchant] = []
-        events.append(f"{state['sheriff']} lets {merchant}'s bag pass: {describe(cards=legal)} face up and "
-                      f"{len(contraband)} contraband face down go to {merchant}'s stand.")
+        events.append(f"{describe(cards=legal)} face up and {len(bag) - len(legal)} contraband face down "
+                      f"go to {merchant}'s stand.")
+
+    def _finish_bag(self, *, events: list[str]) -> None:
+        self.state["inspection"] = None
+        if not self.state["unresolved"]:
+            self._end_round(events=events)
 
     # The end of a round
 

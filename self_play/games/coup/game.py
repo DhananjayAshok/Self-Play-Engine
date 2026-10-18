@@ -243,6 +243,11 @@ class CoupGame(Game):
         rewards = {pid: 1.0 if pid == winner else 0.0 for pid in self.player_ids}
         return {"done": self.done, "rewards": rewards, "winner": winner, "termination_reason": reason}
 
+    # CLAUDE GENERATED (this method only), DJ DOES NOT APPROVE, MUST BE REVISED
+    def get_step_rewards(self) -> list[float]:
+        # TODO: Specify step rewards for Coup and Sheriff
+        return super().get_step_rewards()
+
     # --- text for players --------------------------------------------------------
 
     def get_rules(self, *, observation: dict[str, Any]) -> str:

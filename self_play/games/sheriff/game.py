@@ -396,6 +396,11 @@ class SheriffGame(Game):
         return {"done": True, "rewards": rewards, "winners": winners, "scores": self.scores(),
                 "termination_reason": "all_rounds_played"}
 
+    # CLAUDE GENERATED (this method only), DJ DOES NOT APPROVE, MUST BE REVISED
+    def get_step_rewards(self) -> list[float]:
+        # TODO: Specify step rewards for Coup and Sheriff
+        return super().get_step_rewards()
+
     # --- text for players --------------------------------------------------------
 
     def get_rules(self, *, observation: dict[str, Any]) -> str:

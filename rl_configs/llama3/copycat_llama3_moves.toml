@@ -54,7 +54,7 @@ env.game_config.rounds = 4
 env.taskset.id = "self-play-verifiers"
 env.seat0.sampling.max_tokens = 1024
 env.forfeit_on_invalid = true
-env.reward_mode = "moves"
+env.reward_mode = "mean_steps"
 
 [inference]
 

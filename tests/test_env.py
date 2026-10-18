@@ -89,7 +89,8 @@ def test_a_game_runs_through_seat0_and_fills_its_trace():
     asyncio.run(env.run(TASK, agents))
     trace = interaction.trace
     assert interaction.turns == len(REPLIES)
-    assert set(trace.rewards) == {"game"} and trace.metrics == {"invalid": 0.0}
+    assert set(trace.rewards) == {"game"} and set(trace.metrics) == {"game_outcome", "invalid"}
+    assert trace.metrics["invalid"] == 0.0 and trace.metrics["game_outcome"] == trace.rewards["game"]
     game = trace.info["game"]
     assert game["game"] == "copycat_rps" and game["game_config"] == {"rounds": 2, "seed": 0}
     assert game["seats"] == {"player": "seat0"} and game["player_id"] == "player"
@@ -122,3 +123,72 @@ def test_pinned_seats_are_not_trainable():
     agents = fake_agents(interaction=None)
     asyncio.run(env.setup(agents))
     assert agents.seat0.trainable and not agents.seat1.trainable
+
+
+# CLAUDE GENERATED (every test below), DJ DOES NOT APPROVE, MUST BE REVISED
+
+def run_seat0(*, replies, **extra):
+    env = make_env(**extra)
+    interaction = FakeInteraction(replies=replies)
+    asyncio.run(env.run(TASK, fake_agents(interaction=interaction)))
+    return interaction.trace
+
+
+def test_call_credit_is_off_by_default():
+    info = run_seat0(replies=REPLIES).info
+    assert not {"call_rewards", "call_units", "call_tags"} & set(info)
+
+
+def test_segments_give_each_call_its_rounds_result_and_its_kind_and_phase():
+    """Each think opens a segment; a segment's calls get the result of the move made in it."""
+    trace = run_seat0(replies=REPLIES, call_credit="segments")
+    step_rewards = trace.info["game"]["step_rewards"]  # steps: think 0, scissors 1, think 2, rock 3
+    assert trace.info["call_units"] == [0, 0, 0, 1, 1]
+    assert trace.info["call_rewards"] == [step_rewards[1]] * 3 + [step_rewards[3]] * 2
+    assert trace.info["call_tags"] == ["think:thinking", "talk:boast", "answer:boast", "think:thinking", "answer:comment"]
+
+
+def test_an_invalid_answer_alone_gets_the_invalid_reward():
+    """Round 2's answer is unreadable: the runner plays the fallback, the answer gets -1, and
+    the think beside it keeps the round's result (the fallback move's reward)."""
+    replies = REPLIES[:4] + [reply(answer="banana")]
+    trace = run_seat0(replies=replies, call_credit="segments", forfeit_on_invalid=True)
+    step_rewards = trace.info["game"]["step_rewards"]
+    assert trace.info["call_rewards"] == [step_rewards[1]] * 3 + [step_rewards[3], -1.0]
+    assert trace.rewards == {"game": -1.0} and trace.metrics["invalid"] == 1.0  # the scalar forfeit
+
+
+def test_mean_steps_is_the_mean_reward_of_the_seats_moves():
+    trace = run_seat0(replies=REPLIES, reward_mode="mean_steps")
+    step_rewards = trace.info["game"]["step_rewards"]
+    assert set(trace.rewards) == {"mean_steps"}
+    assert trace.rewards["mean_steps"] == (step_rewards[1] + step_rewards[3]) / 2
+
+
+def test_segments_and_tags_in_a_scripted_coup_game():
+    """Coup, 2 players (the scripted game of tests/test_coup.py): p1's first Coup is forced (no
+    call), p2 reveals Duke and takes Income, p1 chooses a second Coup, p2's last reveal is forced.
+    Every step earns the final outcome, so each segment's mean is the outcome."""
+    from self_play.chat_model import ScriptedChatModel
+    from self_play.games.coup import CoupGame
+    from self_play.runner import Runner
+
+    game = CoupGame(game_config={"seed": 0, "players": 2, "talk_rounds": 0})
+    game.state["actor"] = "p1"
+    game.state["coins"] = {"p1": 14, "p2": 2}
+    game.state["hands"]["p2"] = ["duke", "captain"]
+    models = {
+        "p1": ScriptedChatModel(replies=[reply(answer="plan"), reply(answer="plan again"),
+                                         reply(answer='{"action": "coup", "target": "p2"}')]),
+        "p2": ScriptedChatModel(replies=[reply(answer="plan"), reply(answer='{"reveal": "duke"}'),
+                                         reply(answer="plan again"), reply(answer='{"action": "income"}')]),
+    }
+    runner = Runner(game=game, models=models)
+    result = asyncio.run(runner.run())
+    env = make_env(game="coup", game_config={"players": 2}, call_credit="segments")
+    credit = {pid: env._segment_rewards(runner=runner, result=result, player_id=pid) for pid in ("p1", "p2")}
+    tags = {pid: SelfPlayEnv._call_tags(runner=runner, player_id=pid) for pid in ("p1", "p2")}
+    assert credit["p1"] == ([1.0, 1.0, 1.0], [0, 1, 1])
+    assert credit["p2"] == ([0.0, 0.0, 0.0, 0.0], [0, 0, 1, 1])
+    assert tags["p1"] == ["think:thinking", "think:thinking", "answer:action"]
+    assert tags["p2"] == ["think:thinking", "answer:lose_influence", "think:thinking", "answer:action"]

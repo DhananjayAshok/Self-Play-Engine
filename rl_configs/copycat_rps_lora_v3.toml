@@ -1,0 +1,75 @@
+# CLAUDE GENERATED 100%, DJ DOES NOT APPROVE, MUST BE REVISED
+# Aggressive LoRA RL of gemma-4-31b-it on 4-round copycat rock paper scissors (per-game reward).
+# v1 (lr 1e-5, rank 16) moved nothing on held-out games. The user asked to push until the
+# policy visibly moves or collapses: lr 1e-3 (100x v1), rank 64, and the brakes loosened.
+# GRPO here has no KL-to-reference term; the brakes are the IPO trust region (tokens whose
+# probability moves more than eps are masked, default 0.3) and grad clipping (default norm 1).
+max_steps = 40
+# Halved from 4096 to fit rank-64 LoRA under the ~140 GiB H200 (v1 peaked at 137.4 GiB). One
+# model call is at most ~600 prompt + 1024 completion tokens, so nothing is cut.
+seq_len = 2048
+
+[model]
+name = "google/gemma-4-31b-it"
+
+[monitors.wandb]
+project = "Self-Play"
+name = "copycat-rps-lora-v3"
+
+[deployment]
+num_train_gpus = 1
+num_infer_gpus = 1
+
+[trainer.model]
+# Gemma 4 softcaps its final logits, which only the vanilla LM head applies.
+fused_lm_head_token_chunk_size = "disabled"
+
+[trainer.model.ac]
+freq = 1
+
+[trainer.model.lora]
+rank = 64
+alpha = 128
+# No k_proj/v_proj: Gemma 4's full-attention layers use the keys as values (attention_k_eq_v),
+# and vLLM's packed qkv LoRA would not apply a k_proj adapter to the V slot.
+target_modules = ["q_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+
+[trainer.optim]
+lr = 1e-3
+max_norm = 10.0
+
+[trainer.loss]
+type = "ipo"
+eps = 1.0   # a probability moves by at most 1, so no token is ever masked
+
+[orchestrator]
+batch_size = 64
+
+# The renderer map keys the model as "gemma-4-31B-it"; the lowercase id misses it.
+[orchestrator.renderer]
+name = "gemma4"
+
+[orchestrator.train]
+group_size = 8
+
+[orchestrator.model.lora]
+
+[orchestrator.train.sampling]
+max_completion_tokens = 1024
+
+[[orchestrator.train.source]]
+name = "copycat-rps"
+env.game = "copycat_rps"
+env.game_config.rounds = 4
+env.taskset.id = "self-play-verifiers"
+# The seat's own sampling (max_tokens null) is what the game's calls use: without this the
+# orchestrator's max_completion_tokens never reached them, and run 005 stalled on calls generating
+# for 30+ minutes once the policy started to ramble.
+env.seat0.sampling.max_tokens = 1024
+
+[inference]
+
+[inference.vllm]
+enable_lora = true
+max_lora_rank = 64
+gpu_memory_utilization = 0.85

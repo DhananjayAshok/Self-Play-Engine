@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # CLAUDE GENERATED 100%, DJ DOES NOT APPROVE, MUST BE REVISED
-# Held-out evals of an RL run's saved adapters (and/or the base model) on one GPU: serves the
+# Held-out evals of an RL run's saved adapters (and/or the base model) on one GPU (or --tp GPUs
+# listed in --gpu, for a model too large for one): serves the
 # base model with the adapters as LoRA modules, runs scripts/eval.sh for every (config,
 # target) pair, then writes a paired comparison of each adapter against the base eval.
 #
@@ -21,7 +22,8 @@ ARGS["include_base"]="false"  # also evaluate the base model
 ARGS["model"]="meta-llama/Meta-Llama-3-8B-Instruct"
 ARGS["prefix"]="llama"
 ARGS["port"]="8000"
-ARGS["gpu"]="0"
+ARGS["gpu"]="0"               # GPU id(s) for the eval server, comma-separated with --tp > 1
+ARGS["tp"]="1"                # tensor parallel size of the eval server
 ARGS["parallel"]="4"          # evals in flight at once against the server
 
 # --- Argument parsing (copy verbatim) ---
@@ -100,7 +102,7 @@ if [[ "$run" != "none" ]]; then
         served+=("step$step")
         suffixes+=("$run-step$step")
     done
-    if [[ ${#modules[@]} -gt 0 ]]; then lora_args=(--enable-lora --max-lora-rank 64 --max-loras 4 --max-cpu-loras 64 --lora-modules "${modules[@]}"); fi
+    if [[ ${#modules[@]} -gt 0 ]]; then lora_args=(--enable-lora --max-lora-rank 128 --max-loras 4 --max-cpu-loras 64 --lora-modules "${modules[@]}"); fi
 fi
 if [[ ${#served[@]} -eq 0 ]]; then echo "Nothing to evaluate"; exit 1; fi
 
@@ -121,7 +123,7 @@ if [[ ${#todo[@]} -gt 0 ]]; then
     # this script (and the other eval script of the same job), killing them before the
     # comparisons below are written.
     CUDA_VISIBLE_DEVICES="${ARGS["gpu"]}" VLLM_USE_FLASHINFER_SAMPLER=0 setsid vllm serve "${ARGS["model"]}" \
-        --host 127.0.0.1 --port "$port" --max-model-len 4096 --gpu-memory-utilization 0.9 \
+        --host 127.0.0.1 --port "$port" --tensor-parallel-size "${ARGS["tp"]}" --max-model-len 4096 --gpu-memory-utilization 0.9 \
         "${lora_args[@]}" > "$server_log" 2>&1 &
     server_pid=$!
     for _ in $(seq 1 120); do

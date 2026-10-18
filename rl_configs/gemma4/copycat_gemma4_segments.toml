@@ -1,0 +1,75 @@
+# CLAUDE GENERATED 100%, DJ DOES NOT APPROVE, MUST BE REVISED
+# gemma-4-31b-it with per-call credit by thinking segments (call_grpo, unit baseline; see
+# rl_configs/llama3/copycat_llama3_segments.toml). NOTE: the gemma-s1/s2/s3 runs gave every call
+# of a segment holding an invalid call invalid_move_reward (env.segment_invalid = "segment", since
+# removed); env.py now gives it to the invalid call alone. On 2 H200s (1 vLLM + 1 trainer). Model
+# settings from the Gemma run that worked (rl_configs/copycat_rps_lora_v6.toml, progress.md run
+# 009): rank 64, no k/v LoRA (full-attention layers reuse keys as values), vanilla LM head
+# (softcap), seq_len 2048 (the trainer peaks at ~137 of ~140 GiB). For 4 A100s (80 GB) use
+# --deployment.num-train-gpus 2 --deployment.num-infer-gpus 2 --inference.vllm.tensor-parallel-size 2.
+max_steps = 40
+seq_len = 2048
+
+[model]
+name = "google/gemma-4-31b-it"
+
+[monitors.wandb]
+project = "Self-Play"
+
+[deployment]
+num_train_gpus = 1
+num_infer_gpus = 1
+
+[trainer.model]
+fused_lm_head_token_chunk_size = "disabled"
+
+[trainer.model.ac]
+freq = 1
+
+[trainer.model.lora]
+rank = 64
+alpha = 128
+target_modules = ["q_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+
+[trainer.optim]
+lr = 3e-5
+max_norm = 1.0
+
+[trainer.loss]
+type = "ipo"
+eps = 0.3
+
+[orchestrator]
+batch_size = 64
+
+# The renderer map keys the model as "gemma-4-31B-it"; the lowercase id misses it.
+[orchestrator.renderer]
+name = "gemma4"
+
+[orchestrator.train]
+group_size = 8
+
+[orchestrator.train.algo]
+type = "call_grpo"
+baseline = "unit"
+
+[orchestrator.model.lora]
+
+[orchestrator.train.sampling]
+max_completion_tokens = 1024
+
+[[orchestrator.train.source]]
+name = "copycat-rps"
+env.game = "copycat_rps"
+env.game_config.rounds = 4
+env.taskset.id = "self-play-verifiers"
+env.seat0.sampling.max_tokens = 1024
+env.forfeit_on_invalid = true
+env.call_credit = "segments"
+
+[inference]
+
+[inference.vllm]
+enable_lora = true
+max_lora_rank = 64
+gpu_memory_utilization = 0.85

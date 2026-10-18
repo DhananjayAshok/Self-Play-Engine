@@ -1,0 +1,73 @@
+# CLAUDE GENERATED 100%, DJ DOES NOT APPROVE, MUST BE REVISED
+# Per-call credit by thinking segments (prime-rl's call_grpo, env.call_credit = "segments"):
+# each thinking call opens a segment that runs to the next one; every call in a segment gets
+# the mean of the step rewards of the moves made inside it; an invalid call alone gets
+# invalid_move_reward ("call blame", once env.segment_invalid = "call", now env.py's only
+# behavior). Baseline "unit" (segment k vs segment k of
+# the other games, or their mean when they have no segment k), pinned here because call_grpo's
+# default is now "hybrid"; the best recipe overrides it with
+# --orchestrator.train.algo.baseline unit_tag.
+max_steps = 40
+seq_len = 4096
+
+[model]
+name = "meta-llama/Meta-Llama-3-8B-Instruct"
+
+[monitors.wandb]
+project = "Self-Play"
+
+[deployment]
+num_train_gpus = 1
+num_infer_gpus = 1
+
+[trainer.model.ac]
+freq = 1
+
+[trainer.model.lora]
+rank = 32
+alpha = 64
+target_modules = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+
+[trainer.optim]
+lr = 5e-5
+max_norm = 1.0
+
+[trainer.loss]
+type = "ipo"
+eps = 0.3
+
+[orchestrator]
+batch_size = 64
+
+# Llama-3 (not 3.2) is not in the renderer map, and the llama-3 renderer adds 3.2's date
+# preamble; "default" renders with the model's own chat template, as vLLM does for evals.
+[orchestrator.renderer]
+name = "default"
+
+[orchestrator.train]
+group_size = 8
+
+[orchestrator.train.algo]
+type = "call_grpo"
+baseline = "unit"
+
+[orchestrator.model.lora]
+
+[orchestrator.train.sampling]
+max_completion_tokens = 1024
+
+[[orchestrator.train.source]]
+name = "copycat-rps"
+env.game = "copycat_rps"
+env.game_config.rounds = 4
+env.taskset.id = "self-play-verifiers"
+env.seat0.sampling.max_tokens = 1024
+env.forfeit_on_invalid = true
+env.call_credit = "segments"
+
+[inference]
+
+[inference.vllm]
+enable_lora = true
+max_lora_rank = 64
+gpu_memory_utilization = 0.85

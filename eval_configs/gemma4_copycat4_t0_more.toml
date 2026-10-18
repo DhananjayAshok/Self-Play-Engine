@@ -1,0 +1,30 @@
+# CLAUDE GENERATED 100%, DJ DOES NOT APPROVE, MUST BE REVISED
+# As copycat4_heldout.toml (gemma-4-31b-it, temperature 0) on 400 more held-out seeds
+# (100200-100599), to pool with it.
+model = "google/gemma-4-31b-it"
+push = false
+max_concurrent = 32
+
+[select.include]
+idx = ["100200:100600"]
+
+[client]
+type = "eval"
+base_url = "http://localhost:8000/v1"
+api_key_var = "VLLM_API_KEY"
+
+[sampling]
+temperature = 0
+max_tokens = 1024
+
+[env]
+game = "copycat_rps"
+
+[env.game_config]
+rounds = 4
+
+[env.taskset]
+id = "self-play-verifiers"
+
+[env.seat0.sampling]
+max_tokens = 1024

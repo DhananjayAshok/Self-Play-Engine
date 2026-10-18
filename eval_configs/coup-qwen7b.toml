@@ -1,0 +1,30 @@
+# Coup with 3 players, every seat Qwen2.5-7B-Instruct, served by vLLM on one GPU. One command
+# plays 3 games (seeds 0, 1, 2) one after another; per-game times come from the trace timing.
+# Settings follow qwen2.5-7b.toml.
+# From the repo root, with the vLLM server up on <port>:
+#   time bash scripts/eval.sh --config eval_configs/coup-qwen7b.toml --name coup-qwen7b-001 --base_url http://<node>:<port>/v1
+# The run lands in $storage_dir/eval_runs/<name>/ (traces.jsonl). See eval_configs/RUNTIMES.md.
+model = "Qwen/Qwen2.5-7B-Instruct"
+push = false              # the default uploads the run to the Prime Intellect platform
+max_concurrent = 1        # one game at a time, so games never share the server
+
+[select]
+limit = 3                 # the taskset is infinite, so the number of games must be set: seeds 0, 1, 2
+
+[client]                  # fallback endpoint for any seat that does not pin one
+type = "eval"
+base_url = "http://localhost:8000/v1"
+api_key_var = "VLLM_API_KEY"   # unset means "EMPTY", which a server without --api-key accepts
+
+[sampling]
+temperature = 0           # evaluation never samples
+max_tokens = 2048
+
+[env]
+game = "coup"
+
+[env.game_config]         # every setting but the seed, which each task supplies (see RULES.md)
+players = 3
+
+[env.taskset]
+id = "self-play-verifiers"

@@ -121,7 +121,8 @@ def decision_text(*, observation: dict[str, Any]) -> str:
 
 def answer_request(*, legal_actions: list[Any]) -> str:
     options = "\n".join(f"- {json.dumps(action)}" for action in legal_actions)
-    return f"Your answer is one of these actions, written exactly as shown (JSON):\n{options}"
+    return (f"Your answer is one of these actions, written exactly as shown (JSON):\n{options}\n"
+            f"Write your answer inside the answer tags, for example: <answer>{json.dumps(legal_actions[0])}</answer>")
 
 
 def _normal(value: Any) -> Any:

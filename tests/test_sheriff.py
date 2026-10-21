@@ -705,6 +705,18 @@ def test_prompt_starts_with_the_rules_and_the_menu_is_only_in_the_answer_request
     assert "Bread 3/2" in four.get_rules(observation=four.get_observation(player_id="p1"))
 
 
+def test_the_answer_request_ends_with_a_tagged_example_that_parses_to_a_legal_action():
+    game = table(hands={"p2": ["apples"] * 6})
+    legal = game.get_legal_actions(player_id="p2")
+    request_lines = game.render_answer_request(legal_actions=legal).splitlines()
+    assert request_lines[-1].startswith("Write your answer inside the answer tags, for example: <answer>")
+    assert request_lines[-1].endswith("</answer>")
+    example = request_lines[-1].split("<answer>")[1].removesuffix("</answer>")
+    assert game.parse_answer(player_id="p2", answer=example) in legal
+    offer = [{"gold": n} for n in range(51)]  # the one-line gold offer menu ends the same way
+    assert game.render_answer_request(legal_actions=offer).endswith('for example: <answer>{"gold": 0}</answer>')
+
+
 # --- parsing, illegal actions and checkpoints -------------------------------------------
 
 

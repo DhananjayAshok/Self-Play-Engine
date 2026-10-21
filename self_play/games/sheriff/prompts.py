@@ -198,12 +198,14 @@ def decision_text(*, observation: dict[str, Any]) -> str:
 
 def answer_request(*, legal_actions: list[Any]) -> str:
     """The legal actions, one per line; a gold offer (every amount from 0 up) in one line."""
+    example = (f"Write your answer inside the answer tags, for example: "
+               f"<answer>{json.dumps(legal_actions[0])}</answer>")
     amounts = [action.get("gold") for action in legal_actions if isinstance(action, dict) and set(action) == {"gold"}]
     if amounts and len(amounts) == len(legal_actions) and amounts == list(range(len(amounts))):
         return (f'Your answer is your gold offer, written exactly as shown (JSON):\n- {{"gold": n}} with n a whole '
-                f"number from 0 to {amounts[-1]}")
+                f"number from 0 to {amounts[-1]}\n{example}")
     options = "\n".join(f"- {json.dumps(action)}" for action in legal_actions)
-    return f"Your answer is one of these actions, written exactly as shown (JSON):\n{options}"
+    return f"Your answer is one of these actions, written exactly as shown (JSON):\n{options}\n{example}"
 
 
 def _normal(value: Any) -> Any:

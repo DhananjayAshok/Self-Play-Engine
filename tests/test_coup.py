@@ -383,6 +383,17 @@ def test_prompt_starts_with_the_rules_and_the_menu_is_only_in_the_answer_request
     assert '{"action": "income"}' in request and '{"action": "foreign_aid"}' in request
 
 
+def test_the_answer_request_ends_with_a_tagged_example_that_parses_to_a_legal_action():
+    game = new_game()
+    actor = deciding(game=game)
+    legal = game.get_legal_actions(player_id=actor)
+    last_line = game.render_answer_request(legal_actions=legal).splitlines()[-1]
+    assert last_line.startswith("Write your answer inside the answer tags, for example: <answer>")
+    assert last_line.endswith("</answer>")
+    example = last_line.split("<answer>")[1].removesuffix("</answer>")
+    assert game.parse_answer(player_id=actor, answer=example) == legal[0]
+
+
 # --- parsing ----------------------------------------------------------------------------
 
 

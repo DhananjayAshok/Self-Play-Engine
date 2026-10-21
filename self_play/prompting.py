@@ -29,10 +29,10 @@ Your thinking is scratch work: nobody else sees it, and you will not see it agai
 Your notes are your only memory between turns. You rewrite them only in thinking turns, and they are shown to you every time you are asked something."""
 
 THINK_INSTRUCTION = f"""This is a thinking turn. Write your complete new notes inside <answer>: what you believe, your plan, and anything you would otherwise forget. They replace your current notes entirely and are shown to you at every turn until your next thinking turn.
-To keep your current notes exactly as they are, answer {NO_CHANGE}."""
+To keep your current notes exactly as they are, answer <answer>{NO_CHANGE}</answer>."""
 
 TALK_INSTRUCTION = f"""Before you decide, you may say something to the table. Put what you say inside <answer>; everyone hears it, and it is not binding.
-To say nothing, answer {SILENCE}."""
+To say nothing, answer <answer>{SILENCE}</answer>."""
 
 _THINKING = re.compile(r"<thinking>(.*?)</thinking>", re.S | re.I)
 _ANSWER = re.compile(r"<answer>(.*?)</answer>", re.S | re.I)

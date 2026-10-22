@@ -160,6 +160,7 @@ class ChameleonGame(Game):
         return {
             "you": player_id,
             "is_chameleon": is_chameleon,
+            "thinking": player_id in self.pending_thinking,
             "secret_word": None if is_chameleon and not self.done else state["secret_word"],
             "players": self.player_ids,
             "dealer": state["dealer"],

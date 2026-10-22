@@ -401,16 +401,56 @@ def test_the_deciding_player_is_told_exactly_what_it_is_choosing():
     assert "Your decision now: guess the secret word" in text("p2") and "Guesses left: 1." in text("p2")
 
 
-def test_the_answer_request_ends_with_a_tagged_example_that_parses_to_a_legal_action():
+def test_a_thinking_turn_is_not_told_to_decide_yet():
+    game = rig(chameleon="p2")
+
+    def assert_nobody_is_told_to_decide():
+        for viewer in game.player_ids:
+            assert game.get_observation(player_id=viewer)["thinking"]
+            assert "Your decision now" not in seen_by(game=game, player_id=viewer)[1]
+
+    assert_nobody_is_told_to_decide()  # the opening thinking
+    think_all(game=game)
+    for _ in ("clues", "debate"):
+        act(game=game, moves=[(pid, "done") for pid in game.get_dialogue_phase().eligible])
+    assert_nobody_is_told_to_decide()  # the thinking before the vote
+    think_all(game=game)
+    assert "Your decision now" in seen_by(game=game, player_id="p1")[1]
+
+
+def test_the_answer_request_ends_with_a_tagged_placeholder_example_that_is_not_a_legal_action():
     game = rig()
     to_vote(game=game)
-    for legal in (game.get_legal_actions(player_id="p1"), [{"guess": word} for word in TOPICS["Animals"]],
-                  [{"choose": "p2"}, {"choose": "p3"}]):
+    cases = [(game.get_legal_actions(player_id="p1"), "pX", "the player you choose"),
+             ([{"choose": "p2"}, {"choose": "p3"}], "pX", "the player you choose"),
+             ([{"guess": word} for word in TOPICS["Animals"]], "WORD", "one of the words you may still pick")]
+    for legal, placeholder, meaning in cases:
+        key = next(iter(legal[0]))
         last_line = game.render_answer_request(legal_actions=legal).splitlines()[-1]
-        assert last_line.startswith("Write your answer inside the answer tags, for example: <answer>")
-        assert last_line.endswith("</answer>")
-        example = last_line.split("<answer>")[1].removesuffix("</answer>")
-        assert game.parse_answer(player_id="p1", answer=example) == legal[0]
+        assert last_line == ("Write your answer inside the answer tags, for example: "
+                             f'<answer>{{"{key}": "{placeholder}"}}</answer>, with {placeholder} replaced by {meaning}.')
+        example = last_line.split("<answer>")[1].split("</answer>")[0]
+        parsed = game.parse_answer(player_id="p1", answer=example)
+        assert parsed == {key: placeholder.lower()} and parsed not in legal and example not in map(json.dumps, legal)
+        for action in legal:  # with the placeholder replaced by a legal value it parses to that legal action
+            filled = example.replace(placeholder, action[key])
+            assert game.parse_answer(player_id="p1", answer=filled) == action
+
+
+def test_the_talk_phases_say_that_each_players_first_line_is_its_clue():
+    game = rig(chameleon="p2")
+    think_all(game=game)
+    sentence = "In the table talk, each player's first line is its clue."
+    assert sentence not in seen_by(game=game, player_id="p1")[1]  # the clue round itself
+    act(game=game, moves=[(pid, "done") for pid in game.get_dialogue_phase().eligible])
+    assert sentence in seen_by(game=game, player_id="p1")[1]  # debate
+    act(game=game, moves=[(pid, "done") for pid in game.get_dialogue_phase().eligible])
+    think_all(game=game)
+    assert sentence in seen_by(game=game, player_id="p3")[1]  # vote
+    vote(game=game, votes={"p1": "p2", "p2": "p3", "p3": "p2", "p4": "p3"})
+    assert sentence in seen_by(game=game, player_id="p1")[1]  # tiebreak
+    act(game=game, moves=[("p1", {"choose": "p2"})])
+    assert sentence not in seen_by(game=game, player_id="p2")[1]  # guess
 
 
 def test_parse_answer_reads_json_actions():

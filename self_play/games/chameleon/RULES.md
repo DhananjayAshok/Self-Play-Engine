@@ -37,14 +37,14 @@ Every rule below is marked **[rulebook]** (stated in the source) or **[our choic
 - A player votes for another player, never for itself. **[our choice]**
 - The votes stay hidden until all are in, then they are made public together. **[rulebook]** (simultaneous pointing; the engine runs it as a simultaneous phase)
 - The player with the most votes is accused. **[rulebook]**
-- Tie: the dealer decides. **[rulebook]** It is one more decision for the dealer, choosing among the tied players. **[our choice]** The dealer may choose itself if it is one of the tied players. **[our choice, to confirm]**
+- Tie: the dealer decides. **[rulebook]** It is one more decision for the dealer, choosing among the tied players. **[our choice]** The dealer may choose itself if it is one of the tied players. **[our choice]**
 
 **After the accusation**
 - The accused turns over its card: the table learns whether it is the Chameleon. **[rulebook]**
 - If the accused is not the Chameleon, the Chameleon escapes and the game ends. **[rulebook]**
 - If the accused is the Chameleon, it guesses the secret word. A right guess means it escapes; a wrong guess means it is caught. **[rulebook]**
 - The guess is one of the topic card's 16 words. **[our choice]**
-- With 3 players the caught Chameleon gets two guesses; it stops at the first right one. **[rulebook]** The second guess cannot repeat the first, wrong, word. **[our choice, to confirm]**
+- With 3 players the caught Chameleon gets two guesses; it stops at the first right one. **[rulebook]** The second guess cannot repeat the first, wrong, word. **[our choice]**
 - The secret word and the Chameleon are made public when the game ends. **[our choice]**
 
 **Scoring.** The rulebook's optional score is 2 points for the Chameleon if it escapes undetected, 1 if it is caught but guesses right, and 2 for each other player if it is caught and guesses wrong. **[rulebook]** Rewards here are those scores halved, for one round: **[our choice]**

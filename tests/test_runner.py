@@ -1,11 +1,13 @@
 import asyncio
+from dataclasses import replace
 
 import pytest
 
 from self_play.chat_model import ChatModel, ModelCallFailed, ScriptedChatModel
+from self_play.game import DialogueMode
 from self_play.games.copycat_rps import CopycatRPSGame
 from self_play.games.copycat_rps.game import PLAYER
-from self_play.prompting import parse_reply
+from self_play.prompting import TALK_INSTRUCTION, TALK_REQUIRED_INSTRUCTION, parse_reply
 from self_play.runner import Runner
 
 # Copycat over 2 rounds asks, in order: think, talk + answer (round 1 is ACTION with one
@@ -181,3 +183,83 @@ def test_parse_reply_cuts_at_the_stop_string_and_never_guesses():
     assert parse_reply(reply="<thinking>t</thinking><answer>rock</answer>[STOP]<answer>paper</answer>") == ("t", "rock")
     assert parse_reply(reply="just rock") == (None, None)
     assert parse_reply(reply="[STOP]<answer>rock</answer>") == (None, None)
+
+
+class RequiredTalkCopycat(CopycatRPSGame):
+    """Copycat whose round-1 talk is required (the engine's only talk_required user in tests)."""
+
+    def get_dialogue_phase(self):
+        phase = super().get_dialogue_phase()
+        if phase is not None and phase.mode is DialogueMode.ACTION:
+            return replace(phase, talk_required=True)
+        return phase
+
+
+def run_required(*, replies, max_retries=0):
+    game = RequiredTalkCopycat(game_config={"seed": 0, "rounds": 2})
+    game.state["opening_move"] = "paper"
+    model = ScriptedChatModel(replies=replies)
+    runner = Runner(game=game, models={PLAYER: model}, max_retries=max_retries)
+    result = asyncio.run(runner.run())
+    return runner, model, result
+
+
+def action_phase(*, runner):
+    return next(e for e in runner.record if e["kind"] == "phase" and e["mode"] == "action")
+
+
+def messages_of(*, runner):
+    return [(e["player_id"], e["content"]) for e in runner.record if e["kind"] == "message"]
+
+
+def test_required_talk_with_a_real_message_posts_it():
+    runner, model, result = run_required(replies=[
+        reply(answer="notes"), reply(answer="Good luck!"), reply(answer="rock"),
+        reply(answer="NO CHANGE"), reply(answer="paper"),
+    ])
+    assert messages_of(runner=runner) == [(PLAYER, "Good luck!")]
+    assert TALK_REQUIRED_INSTRUCTION in prompt(model=model, index=1)
+    assert "SILENCE" not in TALK_REQUIRED_INSTRUCTION.replace("or SILENCE is not accepted", "")
+    assert TALK_INSTRUCTION not in prompt(model=model, index=1)
+    assert result["invalid"] == {PLAYER: 0}
+    assert action_phase(runner=runner)["talk_required"] is True
+
+
+def test_required_talk_answered_with_silence_is_retried_then_counts_one_invalid_and_posts_nothing():
+    runner, model, result = run_required(max_retries=2, replies=[
+        reply(answer="notes"), reply(answer="SILENCE"), reply(answer=""), reply(answer="silence."), reply(answer="rock"),
+        reply(answer="NO CHANGE"), reply(answer="paper"),
+    ])
+    assert "Your previous answer was rejected:" in prompt(model=model, index=2)
+    assert "SILENCE is not accepted" in prompt(model=model, index=2)
+    assert [e["call"] for e in calls(runner=runner)].count("talk") == 3  # first try plus max_retries retries
+    assert messages_of(runner=runner) == []
+    assert result["invalid"] == {PLAYER: 1}
+    assert runner.game.state["history"][0]["player"] == "rock"  # the game went on
+
+
+def test_required_talk_retry_that_says_something_is_not_invalid():
+    runner, model, result = run_required(max_retries=1, replies=[
+        reply(answer="notes"), "no tags here", reply(answer="Hello"), reply(answer="rock"),
+        reply(answer="NO CHANGE"), reply(answer="paper"),
+    ])
+    assert "no <answer>...</answer> was found" in prompt(model=model, index=2)
+    assert messages_of(runner=runner) == [(PLAYER, "Hello")]
+    assert result["invalid"] == {PLAYER: 0}
+
+
+def test_required_talk_without_retries_counts_invalid_at_once():
+    runner, _, result = run_required(replies=[
+        reply(answer="notes"), reply(answer="SILENCE"), reply(answer="rock"), reply(answer="NO CHANGE"), reply(answer="paper"),
+    ])
+    assert messages_of(runner=runner) == [] and result["invalid"] == {PLAYER: 1}
+
+
+def test_a_normal_talk_phase_still_accepts_silence_and_counts_nothing():
+    runner, model, result = run_game(max_retries=2, replies=[
+        reply(answer="notes"), reply(answer="SILENCE"), reply(answer="rock"), reply(answer="NO CHANGE"), reply(answer="paper"),
+    ])
+    assert TALK_INSTRUCTION in prompt(model=model, index=1)
+    assert messages_of(runner=runner) == [] and result["invalid"] == {PLAYER: 0}
+    assert len(model.calls) == 5  # no retry was spent on the silence
+    assert action_phase(runner=runner)["talk_required"] is False

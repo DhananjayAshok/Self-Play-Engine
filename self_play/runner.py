@@ -39,6 +39,7 @@ from self_play.prompting import (
     NO_CHANGE,
     SILENCE,
     TALK_INSTRUCTION,
+    TALK_REQUIRED_INSTRUCTION,
     THINK_INSTRUCTION,
     build_messages,
     is_keyword,
@@ -293,11 +294,28 @@ class Runner:
         return entry
 
     async def _talk(self, *, phase: DialoguePhase, player_id: str) -> None:
-        entry = await self._call(phase=phase, player_id=player_id, kind="talk", instruction=TALK_INSTRUCTION)
+        instruction = TALK_REQUIRED_INSTRUCTION if phase.talk_required else TALK_INSTRUCTION
+        entry = await self._call(phase=phase, player_id=player_id, kind="talk", instruction=instruction)
         self.record.append(entry)
+        if phase.talk_required:
+            for _ in range(self.max_retries):
+                if self._said_something(answer=entry["answer"]):
+                    break
+                reason = ("no <answer>...</answer> was found in the reply" if entry["answer"] is None
+                          else "you must say something to the table; an empty answer or SILENCE is not accepted")
+                entry = await self._call(phase=phase, player_id=player_id, kind="talk", instruction=instruction,
+                                         feedback=reason)
+                self.record.append(entry)
+            if not self._said_something(answer=entry["answer"]):
+                self.invalid[player_id] += 1
+                return
         answer = entry["answer"]
         if answer and not is_keyword(answer=answer, keyword=SILENCE):
             self.record.append({"kind": "message", "player_id": player_id, "phase_id": phase.phase_id, "content": answer})
+
+    @staticmethod
+    def _said_something(*, answer: str | None) -> bool:
+        return bool(answer) and not is_keyword(answer=answer, keyword=SILENCE)
 
     async def _ask(self, *, phase: DialoguePhase, player_id: str, feedback: str | None = None) -> dict[str, Any]:
         legal = self.game.get_legal_actions(player_id=player_id)

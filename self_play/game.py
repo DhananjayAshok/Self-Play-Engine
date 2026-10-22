@@ -74,6 +74,11 @@ class DialoguePhase:
     talk_rounds: int = 0
     """How many times each speaker may talk before acting. 0 means straight to the action."""
 
+    talk_required: bool = False
+    """Whether each talk turn must say something. Then the runner rejects an empty answer or
+    SILENCE, asks again up to `max_retries`, and counts a player that still says nothing as
+    invalid. False: talking is optional."""
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "phase_id": self.phase_id,
@@ -81,6 +86,7 @@ class DialoguePhase:
             "mode": self.mode.value,
             "eligible": list(self.eligible),
             "talk_rounds": self.talk_rounds,
+            "talk_required": self.talk_required,
         }
 
 

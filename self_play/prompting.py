@@ -34,6 +34,9 @@ To keep your current notes exactly as they are, answer <answer>{NO_CHANGE}</answ
 TALK_INSTRUCTION = f"""Before you decide, you may say something to the table. Put what you say inside <answer>; everyone hears it, and it is not binding.
 To say nothing, answer <answer>{SILENCE}</answer>."""
 
+TALK_REQUIRED_INSTRUCTION = """Before you decide, you must say something to the table now. Put what you say inside <answer>; everyone hears it, and it is not binding.
+An empty answer or SILENCE is not accepted."""
+
 _THINKING = re.compile(r"<thinking>(.*?)</thinking>", re.S | re.I)
 _ANSWER = re.compile(r"<answer>(.*?)</answer>", re.S | re.I)
 

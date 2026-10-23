@@ -91,6 +91,8 @@ Each decision is one dialogue phase, and every big choice is a chain of small, o
 - **Loading:** while bags are loaded, every merchant who started loading is shown as deciding until all are done, so nobody learns when another bag closed.
 - **The log** names every card taken from or put on a discard pile (they are face up), the legal goods of a passed bag, every offered good, the whole content of an inspected bag, and every good given in payment; draws from the draw pile are logged by count only.
 
+**First line of the answer request (our choice, to make the steps clear; not a rule of the game).** `set_aside`: what the merchant still holds and has set aside. `offer_goods`: what it can still add from its stand and bag, and its offer so far. `decide`: the offer on the table, and that what players said is not binding. Each is built from what that one actor may see. `load` has several actors at once, so the same information (hand, bag, a loaded card cannot be loaded again) is in the merchant's own "Your decision now" text in the observation instead.
+
 **Thinking.** Everyone thinks at the opening (round 1) and again at the start of every later round (`"round"`, default). `"deal"` also asks the merchant and the Sheriff when a bag is picked, before its negotiation.
 
 **Rewards.** The winner gets 1.0; tied winners share 1.0 equally. Step rewards are the engine default (each step earns its player's final reward). The outcome also holds every player's goods, gold, bonus and total.

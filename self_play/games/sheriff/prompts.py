@@ -168,9 +168,10 @@ def decision_text(*, observation: dict[str, Any]) -> str:
         return (f"Put one of your set-aside cards ({describe(cards=set_aside)}) on the discard pile. The last card "
                 f"you put there is its new top.")
     if phase == "load":
-        if not bag:
-            return "Add one card from your hand to your bag. Your bag is empty, so you must add one."
-        return f"Add one card from your hand to your bag, or say done. Your bag holds {len(bag)} of at most 5 cards."
+        base = ("Add one card from your hand to your bag. Your bag is empty, so you must add one." if not bag else
+                f"Add one card from your hand to your bag, or say done. Your bag holds {len(bag)} of at most 5 cards.")
+        return (f"{base} Still in your hand: {describe(cards=hand)}. Already in your bag: {describe(cards=bag)}. "
+                f"A card already in your bag is no longer in your hand and cannot be loaded again.")
     if phase == "declare":
         cards = f"{len(bag)} card{'s' if len(bag) != 1 else ''}"
         return (f"Declare one type of legal good for your bag of {cards} ({describe(cards=bag)}). The "
@@ -196,10 +197,32 @@ def decision_text(*, observation: dict[str, Any]) -> str:
             f"stand: legal goods while you have any, then contraband. Each counts at its value, and no change is given.")
 
 
-def answer_request(*, legal_actions: list[Any]) -> str:
-    """The legal actions, one per line; a gold offer (every amount from 0 up) in one line."""
+def answer_request(*, legal_actions: list[Any], lead: str | None = None) -> str:
+    """The legal actions, one per line; a gold offer (every amount from 0 up) in one line. `lead`,
+    if given, is a first line before them."""
     example = ("Write your answer inside the answer tags, for example: <answer>X</answer>, "
                "with X replaced by one of the actions above, copied exactly.")
+    return (f"{lead}\n" if lead else "") + _menu(legal_actions=legal_actions, example=example)
+
+
+ONLY_NOW = "Only the actions below are possible now."
+
+
+def set_aside_lead(*, hand: list[str], set_aside: list[str]) -> str:
+    return f"You still hold {describe(cards=hand)}; you have set aside {describe(cards=set_aside)} so far. {ONLY_NOW}"
+
+
+def offer_goods_lead(*, gold: int, offered: list[str], from_stand: list[str], from_bag: list[str]) -> str:
+    return (f"You can still add {describe(cards=from_stand)} from your stand and {describe(cards=from_bag)} from your "
+            f"bag; your offer so far is {gold} gold and {describe(cards=offered) if offered else 'no goods'}. {ONLY_NOW}")
+
+
+def decide_lead(*, gold: int, goods: list[str]) -> str:
+    return (f"The offer on the table: {gold} gold, {describe(cards=goods) if goods else 'no goods'}. "
+            f"What players said is not binding; only this offer counts.")
+
+
+def _menu(*, legal_actions: list[Any], example: str) -> str:
     amounts = [action.get("gold") for action in legal_actions if isinstance(action, dict) and set(action) == {"gold"}]
     if amounts and len(amounts) == len(legal_actions) and amounts == list(range(len(amounts))):
         return (f'Your answer is your gold offer, written exactly as shown (JSON):\n- {{"gold": n}} with n a whole '

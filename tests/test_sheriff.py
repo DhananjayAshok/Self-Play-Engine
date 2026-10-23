@@ -734,6 +734,71 @@ def test_the_answer_request_ends_with_a_format_only_example_that_takes_any_legal
     assert game.render_answer_request(legal_actions=offer).endswith(last_line)
 
 
+def first_line_of_request(*, game, player_id):
+    return game.render_answer_request(legal_actions=game.get_legal_actions(player_id=player_id)).splitlines()[0]
+
+
+def test_the_answer_request_leads_with_what_the_actor_has_and_chose_in_set_aside_and_offer_goods():
+    game = table(hands={"p2": ["apples", "apples", "cheese", "cheese", "pepper", "mead"]})
+    assert first_line_of_request(game=game, player_id="p2") == (
+        "You still hold 2 Apples, 2 Cheese, 1 Pepper, 1 Mead; you have set aside nothing so far. "
+        "Only the actions below are possible now.")
+    act(game=game, moves=[("p2", {"set_aside": "pepper"}), ("p2", {"set_aside": "mead"})])
+    assert first_line_of_request(game=game, player_id="p2") == (
+        "You still hold 2 Apples, 2 Cheese; you have set aside 1 Pepper, 1 Mead so far. "
+        "Only the actions below are possible now.")
+    game = four_bags()
+    act(game=game, moves=[("p1", {"bag": "p4"}), ("p4", {"gold": 2})])
+    game.state["stand_legal"]["p4"] = ["cheese"]
+    assert first_line_of_request(game=game, player_id="p4") == (
+        "You can still add 1 Cheese from your stand and 1 Chickens, 2 Pepper from your bag; your offer so far is "
+        "2 gold and no goods. Only the actions below are possible now.")
+    act(game=game, moves=[("p4", {"add": {"from": "bag", "good": "pepper"}})])
+    assert first_line_of_request(game=game, player_id="p4") == (
+        "You can still add 1 Cheese from your stand and 1 Chickens, 1 Pepper from your bag; your offer so far is "
+        "2 gold and 1 Pepper. Only the actions below are possible now.")
+
+
+def test_the_sheriffs_decide_request_leads_with_the_offer_and_says_talk_is_not_binding():
+    game = four_bags()
+    act(game=game, moves=[("p1", {"bag": "p4"}), ("p4", {"gold": 2}), ("p4", {"add": {"from": "bag", "good": "chickens"}}),
+                          ("p4", "done")])
+    assert first_line_of_request(game=game, player_id="p1") == (
+        "The offer on the table: 2 gold, 1 Chickens. What players said is not binding; only this offer counts.")
+
+
+def test_the_leads_appear_only_in_their_steps_and_name_nothing_hidden():
+    game = new_game(seed=1)
+    seen = {}
+    for _ in range(4000):
+        if game.done:
+            break
+        phase = current(game=game)
+        pid = phase.eligible[0]
+        legal = game.get_legal_actions(player_id=pid)
+        first = game.render_answer_request(legal_actions=legal).splitlines()[0]
+        seen.setdefault(phase.phase, set()).add(first.startswith(("You still hold", "You can still add", "The offer on the table")))
+        if phase.phase == "set_aside":
+            hidden = [describe(cards=game.state["hands"][other]) for other in game.player_ids if other != pid]
+            assert all(text not in first for text in hidden if text != "nothing")
+        act(game=game, moves=[(pid, legal[0])])
+    assert game.done
+    assert {name for name, flags in seen.items() if flags == {True}} == {"set_aside", "offer_goods", "decide"}
+    assert all(flags == {False} for name, flags in seen.items() if name not in ("set_aside", "offer_goods", "decide"))
+
+
+def test_the_load_text_shows_a_merchant_only_its_own_cards():
+    game = table(hands={"p2": ["apples"] * 6, "p3": ["crossbow", "silk", "mead", "pepper", "cheese", "cheese"]})
+    skip_market(game=game)
+    lines = decision_lines(game=game)
+    assert "Crossbow" not in lines["p2"] and "Silk" not in lines["p2"]
+    assert "Apples" not in lines["p3"] and "6 Apples" in lines["p2"]
+    act(game=game, moves=[("p3", {"load": "silk"}), ("p2", {"load": "apples"})])
+    lines = decision_lines(game=game)
+    assert "Already in your bag: 1 Silk" in lines["p3"] and "Silk" not in lines["p2"]
+    assert "Already in your bag: 1 Apples" in lines["p2"]
+
+
 # --- parsing, illegal actions and checkpoints -------------------------------------------
 
 
@@ -849,9 +914,17 @@ def test_the_deciding_players_prompt_says_exactly_what_it_is_choosing_now():
     skip_market(game=game)
     lines = decision_lines(game=game)
     assert lines["p1"] is None  # the Sheriff loads nothing
-    assert lines["p2"] == lines["p3"] == "Add one card from your hand to your bag. Your bag is empty, so you must add one."
+    for pid in ("p2", "p3"):
+        assert lines[pid] == (
+            "Add one card from your hand to your bag. Your bag is empty, so you must add one. "
+            f"Still in your hand: {describe(cards=game.state['hands'][pid])}. Already in your bag: nothing. "
+            "A card already in your bag is no longer in your hand and cannot be loaded again.")
     act(game=game, moves=[("p2", {"load": game.state["hands"]["p2"][0]}), ("p3", {"load": game.state["hands"]["p3"][0]})])
-    assert decision_lines(game=game)["p2"] == "Add one card from your hand to your bag, or say done. Your bag holds 1 of at most 5 cards."
+    assert decision_lines(game=game)["p2"] == (
+        "Add one card from your hand to your bag, or say done. Your bag holds 1 of at most 5 cards. "
+        f"Still in your hand: {describe(cards=game.state['hands']['p2'])}. "
+        f"Already in your bag: {describe(cards=game.state['bags']['p2'])}. "
+        "A card already in your bag is no longer in your hand and cannot be loaded again.")
     act(game=game, moves=[("p2", "done"), ("p3", "done")])
     bag = describe(cards=game.state["bags"]["p2"])
     assert decision_lines(game=game) == {"p1": None, "p3": None, "p2": (

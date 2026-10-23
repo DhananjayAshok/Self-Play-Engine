@@ -9,6 +9,7 @@ from self_play.game import THINK, DialogueMode
 from self_play.games import GAMES
 from self_play.games.chameleon import ChameleonGame
 from self_play.games.chameleon.game import REWARDS, TOPICS
+from self_play.games.chameleon.prompts import CLUE_IS_SECRET, CLUE_NOT_ONE_WORD, CLUE_TALK, DEBATE_TALK, clue_problem
 from self_play.prompting import TALK_INSTRUCTION, TALK_REQUIRED_INSTRUCTION
 from self_play.runner import Runner
 
@@ -585,7 +586,8 @@ def test_a_scripted_game_clues_in_dealer_order_hidden_votes_and_step_rewards():
     assert [(e["player_id"], e["content"]) for e in runner.record if e["kind"] == "message"] == [
         ("p1", "animal"), ("p2", "pet"), ("p3", "wings"), ("p4", "night")]
     p2_clue = calls(runner=runner, player_id="p2", kind="talk")[0]["messages"][1]["content"]
-    assert TALK_REQUIRED_INSTRUCTION in p2_clue and TALK_INSTRUCTION not in p2_clue and "p1 said: animal" in p2_clue
+    assert CLUE_TALK in p2_clue and TALK_REQUIRED_INSTRUCTION not in p2_clue and TALK_INSTRUCTION not in p2_clue
+    assert "p1 said: animal" in p2_clue
     assert "said:" not in calls(runner=runner, player_id="p1", kind="talk")[0]["messages"][1]["content"]
     retry = calls(runner=runner, player_id="p2", kind="answer")[1]["messages"][1]["content"]
     assert "Your previous answer was rejected:" in retry and "voted for" not in retry  # p1 had voted, p2 does not see how
@@ -632,6 +634,100 @@ def test_a_silent_clue_is_asked_again_and_a_retry_that_gives_one_is_not_invalid(
     retry = calls(runner=runner, player_id="p3", kind="talk")[1]["messages"][1]["content"]
     assert "Your previous answer was rejected:" in retry and "SILENCE is not accepted" in retry
     assert ("p3", "wings") in [(e["player_id"], e["content"]) for e in runner.record if e["kind"] == "message"]
+
+
+# --- the game's own talk instructions and the clue check -------------------------------------------
+
+
+@pytest.mark.parametrize("text, secret, expected", [
+    ("night", SECRET, None),
+    ("Night.", SECRET, None),                    # surrounding punctuation is not a second word
+    ('"night"', SECRET, None),
+    ("ice-cream", SECRET, None),
+    ("two words", SECRET, CLUE_NOT_ONE_WORD),
+    ("night and day", SECRET, CLUE_NOT_ONE_WORD),
+    ("...", SECRET, CLUE_NOT_ONE_WORD),
+    ("42", SECRET, CLUE_NOT_ONE_WORD),
+    ("owl", SECRET, CLUE_IS_SECRET),
+    ("OWL!", SECRET, CLUE_IS_SECRET),            # case-insensitive
+    ("owl", None, None),                         # the Chameleon is never checked against the word
+    ("two words", None, CLUE_NOT_ONE_WORD),
+])
+def test_clue_problem(text, secret, expected):
+    assert clue_problem(text=text, secret_word=secret) == expected
+
+
+def clue_phase(*, game):
+    think_all(game=game)
+    phase = game.get_dialogue_phase()
+    assert phase.phase == "clues"
+    return phase
+
+
+def test_the_game_rejects_a_secret_word_clue_from_a_player_who_knows_it_but_not_from_the_chameleon():
+    game = rig()  # Chameleon p2, secret owl
+    phase = clue_phase(game=game)
+    assert game.check_talk(player_id="p3", phase=phase, text="Owl") == CLUE_IS_SECRET
+    assert game.check_talk(player_id="p1", phase=phase, text="bird") is None
+    assert game.check_talk(player_id="p2", phase=phase, text="Owl") is None  # saying it would otherwise reveal it
+    assert game.check_talk(player_id="p2", phase=phase, text="two words") == CLUE_NOT_ONE_WORD
+
+
+def test_the_clue_check_does_not_apply_in_the_debate():
+    game = rig()
+    phase = clue_phase(game=game)
+    act(game=game, moves=[(pid, "done") for pid in phase.eligible])
+    debate = game.get_dialogue_phase()
+    assert debate.phase == "debate"
+    assert game.check_talk(player_id="p3", phase=debate, text="I think it is p4, and they said owl") is None
+
+
+def test_the_clue_and_debate_instructions():
+    game = rig()
+    phase = clue_phase(game=game)
+    assert game.render_talk_instruction(phase=phase, required=True) == CLUE_TALK
+    assert "exactly one word and nothing else, never the secret word" in CLUE_TALK
+    act(game=game, moves=[(pid, "done") for pid in phase.eligible])
+    debate = game.get_dialogue_phase()
+    assert game.render_talk_instruction(phase=debate, required=False) == DEBATE_TALK
+    assert "who the Chameleon is" in DEBATE_TALK and "do not give more clues" in DEBATE_TALK
+    assert "SILENCE" in DEBATE_TALK  # the debate may stay silent
+
+
+def test_a_clue_with_the_secret_word_is_asked_again_with_the_reason_and_then_posted():
+    votes = {"p1": "p3", "p2": "p3", "p3": "p1", "p4": "p3"}
+    replies = scripted_game(votes=votes)
+    replies["p3"][1:2] = [reply(answer="Owl"), reply(answer="wings")]
+    result, runner, _ = run_scripted(game=rig(), replies=replies, max_retries=1)
+    retry = calls(runner=runner, player_id="p3", kind="talk")[1]["messages"][1]["content"]
+    assert CLUE_IS_SECRET in retry and CLUE_TALK in retry
+    assert ("p3", "wings") in [(e["player_id"], e["content"]) for e in runner.record if e["kind"] == "message"]
+    assert ("p3", "Owl") not in [(e["player_id"], e["content"]) for e in runner.record if e["kind"] == "message"]
+    assert result["invalid"] == {"p1": 0, "p2": 0, "p3": 0, "p4": 0}
+
+
+def test_a_clue_that_stays_wrong_counts_one_invalid_and_posts_nothing():
+    votes = {"p1": "p3", "p2": "p3", "p3": "p1", "p4": "p3"}
+    replies = scripted_game(votes=votes)
+    replies["p4"][1:2] = [reply(answer="a long night"), reply(answer="very dark night")]
+    result, runner, _ = run_scripted(game=rig(), replies=replies, max_retries=1)
+    assert result["invalid"] == {"p1": 0, "p2": 0, "p3": 0, "p4": 1}
+    assert [e["player_id"] for e in runner.record if e["kind"] == "message"] == ["p1", "p2", "p3"]
+    assert CLUE_NOT_ONE_WORD in calls(runner=runner, player_id="p4", kind="talk")[1]["messages"][1]["content"]
+
+
+def test_the_chameleon_may_say_the_secret_word_and_a_rejected_chameleon_clue_never_shows_it():
+    votes = {"p1": "p3", "p2": "p3", "p3": "p1", "p4": "p3"}
+    replies = scripted_game(votes=votes)
+    replies["p2"][1:2] = [reply(answer="a bird of the night"), reply(answer="owl")]  # rejected, then the secret word itself
+    result, runner, _ = run_scripted(game=rig(), replies=replies, max_retries=1)
+    assert ("p2", "owl") in [(e["player_id"], e["content"]) for e in runner.record if e["kind"] == "message"]
+    assert result["invalid"] == {"p1": 0, "p2": 0, "p3": 0, "p4": 0}
+    for entry in calls(runner=runner, player_id="p2", kind="talk"):  # nothing the Chameleon is shown names the word
+        content = entry["messages"][1]["content"]
+        assert "The secret word is" not in content and CLUE_IS_SECRET not in content and "secret word itself" not in content
+    rejection = calls(runner=runner, player_id="p2", kind="talk")[1]["messages"][1]["content"]
+    assert CLUE_NOT_ONE_WORD in rejection
 
 
 # --- crash and resume through the runner ------------------------------------------------------------

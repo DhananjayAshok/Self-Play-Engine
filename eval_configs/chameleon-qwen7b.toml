@@ -22,6 +22,7 @@ max_tokens = 2048
 
 [env]
 game = "chameleon"
+max_retries = 2          # a rejected clue or an unreadable answer is asked again twice before it counts as invalid
 
 [env.game_config]         # every setting but the seed, which each task supplies (see RULES.md)
 players = 4

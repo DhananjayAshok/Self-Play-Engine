@@ -23,10 +23,14 @@ Every rule below is marked **[rulebook]** (stated in the source) or **[our choic
 - Clues are public: every later player sees them. **[rulebook]**
 - Repeating a word that was already said is allowed. **[rulebook]**
 - A clue is a required talk turn: the engine rejects saying nothing (an empty answer or SILENCE) and asks again, and a player that still says nothing posts no clue and counts one invalid answer. **[our choice]**
-- The prompt asks for exactly one word. The engine does not check it. **[our choice]**
+- The prompt asks for exactly one word and nothing else, never the secret word. **[our choice]**
+- Check 1 (our choice): the game rejects a clue that is not exactly one word: a single token that contains a letter, with surrounding punctuation or quotes ignored (`Night.` is fine, `a long night` is not). The rejected clue is handled like a silent one: the player is asked again with the reason, up to `max_retries`, then counts one invalid answer and posts no clue. **[our choice]**
+- Check 2 (our choice): for a player who knows the secret word, the game also rejects a clue that is the secret word itself (case-insensitive, surrounding punctuation ignored). **[our choice]**
+- The Chameleon is never checked against the secret word. It does not know the word, so a rejection would tell it the word, and a Chameleon that happens to say the word is allowed. Its clue is still checked for being exactly one word, which reveals nothing. **[our choice]**
 
 **Debate**
 - After the clues, everyone may talk. **[rulebook]** ("a few minutes")
+- The debate prompt says to talk about who the Chameleon is and not to give more clues; nothing is checked in the debate. **[our choice]**
 - It is a talk phase for everyone, `talk_rounds` talk turns each (game config, default 1), in clue order. Talking is not required, so SILENCE is allowed. With `talk_rounds` 0 the phase does not happen. **[our choice]**
 
 **Thinking**

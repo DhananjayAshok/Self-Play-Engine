@@ -36,6 +36,7 @@ from self_play.chat_model import ChatModel
 from self_play.checkpoint import load_snapshot, save_snapshot
 from self_play.game import THINK, DialogueMode, DialoguePhase, Game, StepResult
 from self_play.prompting import (
+    NO_ANSWER_TAG,
     NO_CHANGE,
     SILENCE,
     TALK_INSTRUCTION,
@@ -209,8 +210,11 @@ class Runner:
 
     async def _run_thinking(self, *, phase: DialoguePhase) -> None:
         """Every eligible player rewrites its notes, independently and at once."""
+        instruction = self.game.render_think_instruction(phase=phase)
+        if instruction is None:
+            instruction = THINK_INSTRUCTION
         calls = await asyncio.gather(*(
-            self._call(phase=phase, player_id=player_id, kind="think", instruction=THINK_INSTRUCTION)
+            self._call(phase=phase, player_id=player_id, kind="think", instruction=instruction)
             for player_id in phase.eligible
         ))
         for player_id, entry in zip(phase.eligible, calls, strict=True):
@@ -294,19 +298,20 @@ class Runner:
         return entry
 
     async def _talk(self, *, phase: DialoguePhase, player_id: str) -> None:
-        instruction = TALK_REQUIRED_INSTRUCTION if phase.talk_required else TALK_INSTRUCTION
+        instruction = self.game.render_talk_instruction(phase=phase, required=phase.talk_required)
+        if instruction is None:
+            instruction = TALK_REQUIRED_INSTRUCTION if phase.talk_required else TALK_INSTRUCTION
         entry = await self._call(phase=phase, player_id=player_id, kind="talk", instruction=instruction)
         self.record.append(entry)
         if phase.talk_required:
             for _ in range(self.max_retries):
-                if self._said_something(answer=entry["answer"]):
+                reason = self._talk_problem(phase=phase, player_id=player_id, answer=entry["answer"])
+                if reason is None:
                     break
-                reason = ("no <answer>...</answer> was found in the reply" if entry["answer"] is None
-                          else "you must say something to the table; an empty answer or SILENCE is not accepted")
                 entry = await self._call(phase=phase, player_id=player_id, kind="talk", instruction=instruction,
                                          feedback=reason)
                 self.record.append(entry)
-            if not self._said_something(answer=entry["answer"]):
+            if self._talk_problem(phase=phase, player_id=player_id, answer=entry["answer"]) is not None:
                 self.invalid[player_id] += 1
                 return
         answer = entry["answer"]
@@ -316,6 +321,14 @@ class Runner:
     @staticmethod
     def _said_something(*, answer: str | None) -> bool:
         return bool(answer) and not is_keyword(answer=answer, keyword=SILENCE)
+
+    def _talk_problem(self, *, phase: DialoguePhase, player_id: str, answer: str | None) -> str | None:
+        """Why a talk answer in a talk_required phase is not accepted, or None if it is."""
+        if answer is None:
+            return NO_ANSWER_TAG
+        if not self._said_something(answer=answer):
+            return "you must say something to the table; an empty answer or SILENCE is not accepted"
+        return self.game.check_talk(player_id=player_id, phase=phase, text=answer)
 
     async def _ask(self, *, phase: DialoguePhase, player_id: str, feedback: str | None = None) -> dict[str, Any]:
         legal = self.game.get_legal_actions(player_id=player_id)
@@ -347,7 +360,7 @@ class Runner:
     def _try_answer(self, *, phase: DialoguePhase, player_id: str, answer: str | None) -> str | None:
         """Parse and step one answer. None if accepted, otherwise why not."""
         if answer is None:
-            error = "no <answer>...</answer> was found in the reply"
+            error = NO_ANSWER_TAG
         else:
             try:
                 action = self.game.parse_answer(player_id=player_id, answer=answer)

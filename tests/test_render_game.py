@@ -28,7 +28,7 @@ def scripted_row(*, seed=3, invalid_voter=False):
     chameleon = ChameleonGame(game_config=config).state["chameleon"]
     target = next(pid for pid in ("p1", "p2") if pid != chameleon)  # p1 or p2: see the invalid voter below
     votes = {pid: target for pid in ids if pid != target} | {target: chameleon}
-    replies = {pid: [reply(answer="notes"), reply(answer=f"clue {pid} ```x```", thinking="my clue"), reply(answer="SILENCE"),
+    replies = {pid: [reply(answer="notes"), reply(answer=f"```{pid}```", thinking="my clue"), reply(answer="SILENCE"),
                      reply(answer="NO CHANGE"), reply(answer=json.dumps({"vote": votes[pid]}))] for pid in ids}
     if invalid_voter:
         # A voter's fallback is its first legal vote, the first other player: here the target, so the outcome holds.
@@ -67,8 +67,8 @@ def test_a_game_is_rendered_with_a_header_and_every_record_entry_in_order():
     assert first_prompt in markdown
     assert "**Thinking:**" in markdown and "my clue" in markdown
     assert "**Forced**" in markdown and "**Thought**" in markdown and "**Accepted**" in markdown
-    assert "> **Event:** Votes: " in markdown and "says:** clue " in markdown
-    assert "````" in markdown  # the clue holds a code fence, so the fences around it are longer
+    assert "> **Event:** Votes: " in markdown and "says:** ```p" in markdown
+    assert "````" in markdown  # a clue is one word inside a code fence, so the fences around it are longer
 
 
 def test_the_state_after_each_step_is_rebuilt_from_the_seed():

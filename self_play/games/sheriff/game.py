@@ -39,7 +39,8 @@ from collections import Counter
 from typing import Any
 
 from self_play.game import DialogueMode, DialoguePhase, Game
-from self_play.games.sheriff.prompts import NAMES, answer_request, describe, parse_action, render_prompt, rules_text
+from self_play.games.sheriff.prompts import (NAMES, answer_request, decide_lead, describe, offer_goods_lead, parse_action,
+                                             render_prompt, rules_text, set_aside_lead)
 
 GOODS = {"apples": (2, 2), "cheese": (3, 2), "bread": (3, 2), "chickens": (4, 2),
          "pepper": (6, 4), "mead": (7, 4), "silk": (8, 4), "crossbow": (9, 4)}
@@ -416,7 +417,27 @@ class SheriffGame(Game):
         return render_prompt(rules=self.get_rules(observation=observation), observation=observation)
 
     def render_answer_request(self, *, legal_actions: list[Any]) -> str:
-        return answer_request(legal_actions=legal_actions)
+        return answer_request(legal_actions=legal_actions, lead=self._answer_lead())
+
+    def _answer_lead(self) -> str | None:
+        """The first line of the answer request in the steps with one actor (set_aside, offer_goods,
+        decide), built from what that actor may see. None in every other step: a load request is
+        written for several merchants at once, so its information is in the observation."""
+        phase = self._get_dialogue_phase()
+        if phase is None:
+            return None
+        state, actor = self.state, phase.eligible[0]
+        if phase.phase == "set_aside":
+            return set_aside_lead(hand=sort_goods(cards=state["hands"][actor]),
+                                  set_aside=sort_goods(cards=state["market"]["set_aside"]))
+        offer = state["inspection"]["offer"] if state["inspection"] else None
+        if phase.phase == "offer_goods":
+            return offer_goods_lead(gold=offer["gold"], offered=sort_goods(cards=offer["stand"] + offer["bag"]),
+                                    from_stand=sort_goods(cards=self._offerable(source="stand")),
+                                    from_bag=sort_goods(cards=self._offerable(source="bag")))
+        if phase.phase == "decide":
+            return decide_lead(gold=offer["gold"], goods=sort_goods(cards=offer["stand"] + offer["bag"]))
+        return None
 
     def parse_answer(self, *, player_id: str, answer: str) -> Any:
         return parse_action(answer=answer)

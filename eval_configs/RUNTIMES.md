@@ -27,6 +27,7 @@ scancel <id>
 |---|---|---|---|---|---|
 | all: Qwen2.5-7B-Instruct | A40 | 8 min 5 s (N = 3, 3 min 49 s to 13 min 24 s) | 139 (69 to 200) | 3.5 | coup-qwen7b-13176501, 2026-10-15, before the "Your decision now" prompt line (52% invalid) |
 | all: Qwen2.5-7B-Instruct | A40 | 2 min 54 s (N = 3, 1 min 44 s to 3 min 50 s) | 49 (30 to 70) | 3.6 | coup-qwen7b-13177897, 2026-10-15, after it (12.5% invalid) |
+| all: Qwen2.5-7B-Instruct | A40 | 1 min 59 s (N = 1, seed 0) | 30 | 4.0 | coup-qwen7b-13298397, 2026-10-22, with the placeholder answer example `<answer>X</answer>` (1 invalid answer) |
 
 Game settings for both rows: the defaults in RULES.md (`talk_rounds` 1, `window_talk_rounds` 0, `thinking` "actor"), temperature 0, seeds 0, 1, 2. The commands' `real` times were 24 min 30 s and 8 min 49 s for the 3 games, matching the sums of the trace times (24 min 16 s and 8 min 41 s). The model's own share of a call (`calls[].time` in the trace) was 2.8 s and 2.9 s on average; the rest is client and harness time. Invalid answers are decisions (answer and think calls) the runner replaced with a fallback. Fewer of them made the games much shorter (21 to 45 turns before, 5 to 13 after), so the time per call stayed the same and the time per game fell.
 
@@ -35,8 +36,18 @@ Game settings for both rows: the defaults in RULES.md (`talk_rounds` 1, `window_
 | Seats | GPU | One game (mean of N, min to max) | Calls/game | Sec/call | Run |
 |---|---|---|---|---|---|
 | all: Qwen2.5-7B-Instruct | A40 | 16 min 51 s (N = 3, 13 min 28 s to 18 min 42 s) | 316 (285 to 338) | 3.2 | sheriff-qwen7b-13179117, 2026-10-15, with the "Your decision now" prompt line (30.5% invalid) |
+| all: Qwen2.5-7B-Instruct | A40 | 15 min 53 s (N = 1, seed 0) | 348 | 2.7 | sheriff-qwen7b-13298397, 2026-10-22, with the placeholder answer example `<answer>X</answer>` (55 invalid answers, all illegal moves) |
 
 Game settings: the defaults in RULES.md (`talk_rounds` 2, `thinking` "round"), temperature 0, seeds 0, 1, 2. Every game played all 9 rounds. The command's `real` time was 50 min 40 s for the 3 games, matching the sum of the trace times (50 min 33 s). The model's own share of a call (`calls[].time`) was 2.5 s on average. Per game: 27 think, 72 talk and 186 to 239 answer calls. Of the 732 decisions (answer and think calls), 223 were replaced with a fallback: 113 illegal actions (often a card no longer in hand), 60 answers without an `<answer>` tag, 18 not readable as JSON, and 32 thinking turns without an `<answer>` tag. The longest prompt was 5,726 tokens (an `offer_goods` answer, seed 0), well inside the 32,768-token context.
+
+## chameleon, 4 players
+
+| Seats | GPU | One game (mean of N, min to max) | Calls/game | Sec/call | Run |
+|---|---|---|---|---|---|
+| all: Qwen2.5-7B-Instruct | A40 | 1 min 13 s (N = 1, seed 0) | 21 | 3.5 | chameleon-qwen7b-13294724, 2026-10-21 |
+| all: Qwen2.5-14B-Instruct | A40 | 2 min 18 s (N = 1, seed 0) | 22 | 6.3 | chameleon-qwen14b-13294724, 2026-10-21 |
+
+Game settings: the defaults in RULES.md (`talk_rounds` 1), temperature 0, seed 0, `max_retries` 0. Both rows are one game, so they say nothing about the spread between games.
 
 ## Server start
 

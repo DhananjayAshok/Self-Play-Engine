@@ -4,6 +4,8 @@ observation, so it can show nothing the observation hides."""
 import json
 from typing import Any
 
+from self_play.prompting import SILENCE
+
 RULES = """You are playing The Chameleon with {players} players, p1 to p{players} in seat order. One round is one game.
 A topic card shows a topic and 16 words. One of the 16 is the secret word. Every player except one knows the
 secret word; the odd one out is the Chameleon, who does not know it and must pretend that it does.
@@ -93,6 +95,33 @@ def situation_text(*, observation: dict[str, Any]) -> str:
     if asked:
         text += f" Your decision now: guess the secret word, one of the words you may still pick. Guesses left: {left}."
     return text
+
+
+CLUE_TALK = """Say your clue now: exactly one word and nothing else, never the secret word. Put it inside <answer>; everyone hears it.
+An empty answer or SILENCE is not accepted."""
+
+DEBATE_TALK = f"""Talk about who the Chameleon is; do not give more clues. Put what you say inside <answer>; everyone hears it, and it is not binding.
+To say nothing, answer <answer>{SILENCE}</answer>."""
+
+CLUE_NOT_ONE_WORD = "your clue must be exactly one word and nothing else"
+CLUE_IS_SECRET = "your clue must not be the secret word itself"
+
+
+def talk_instruction(*, phase: str) -> str | None:
+    """What a talk turn asks for in this phase; None for a phase the engine's text serves."""
+    return {"clues": CLUE_TALK, "debate": DEBATE_TALK}.get(phase)
+
+
+def clue_problem(*, text: str, secret_word: str | None) -> str | None:
+    """Why this clue is not allowed, or None. One word: a single token (letters, with at most
+    surrounding punctuation or quotes). `secret_word` is None for the Chameleon, who is never
+    checked against it: the rejection would tell it the word."""
+    word = text.strip().strip(".,!?;:\"'`*").strip()
+    if not word or len(word.split()) != 1 or not any(char.isalpha() for char in word):
+        return CLUE_NOT_ONE_WORD
+    if secret_word is not None and word.casefold() == secret_word.casefold():
+        return CLUE_IS_SECRET
+    return None
 
 
 PLACEHOLDERS = {"vote": ("pX", "the player you choose"), "choose": ("pX", "the player you choose"),

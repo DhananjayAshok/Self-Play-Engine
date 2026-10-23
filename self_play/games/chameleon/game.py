@@ -18,7 +18,9 @@ closes the phase once everyone has spoken. Votes are kept in `state["votes"]` bu
 from typing import Any
 
 from self_play.game import THINK, DialogueMode, DialoguePhase, Game
-from self_play.games.chameleon.prompts import answer_request, parse_action, render_prompt, rules_text
+from self_play.games.chameleon.prompts import (
+    answer_request, clue_problem, parse_action, render_prompt, rules_text, talk_instruction,
+)
 
 MIN_PLAYERS, MAX_PLAYERS = 3, 6
 DEFAULTS = {"talk_rounds": 1}
@@ -225,6 +227,17 @@ class ChameleonGame(Game):
 
     def parse_answer(self, *, player_id: str, answer: str) -> Any:
         return parse_action(answer=answer)
+
+    def render_talk_instruction(self, *, phase: DialoguePhase, required: bool) -> str | None:
+        return talk_instruction(phase=phase.phase)
+
+    def check_talk(self, *, player_id: str, phase: DialoguePhase, text: str) -> str | None:
+        """Clue round only: exactly one word, and for a player who knows it, not the secret word.
+        The Chameleon is never checked against the secret word, or the rejection would reveal it."""
+        if phase.phase != "clues":
+            return None
+        secret = None if player_id == self.state["chameleon"] else self.state["secret_word"]
+        return clue_problem(text=text, secret_word=secret)
 
     # --- transitions -------------------------------------------------------------
 

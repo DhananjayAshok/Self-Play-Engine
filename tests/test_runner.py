@@ -1,11 +1,15 @@
 import asyncio
+from dataclasses import replace
 
 import pytest
 
 from self_play.chat_model import ChatModel, ModelCallFailed, ScriptedChatModel
+from self_play.game import DialogueMode
 from self_play.games.copycat_rps import CopycatRPSGame
 from self_play.games.copycat_rps.game import PLAYER
-from self_play.prompting import parse_reply
+from self_play.games.coup import CoupGame
+from self_play.games.sheriff import SheriffGame
+from self_play.prompting import NO_ANSWER_TAG, THINK_INSTRUCTION, TALK_INSTRUCTION, TALK_REQUIRED_INSTRUCTION, parse_reply
 from self_play.runner import Runner
 
 # Copycat over 2 rounds asks, in order: think, talk + answer (round 1 is ACTION with one
@@ -181,3 +185,171 @@ def test_parse_reply_cuts_at_the_stop_string_and_never_guesses():
     assert parse_reply(reply="<thinking>t</thinking><answer>rock</answer>[STOP]<answer>paper</answer>") == ("t", "rock")
     assert parse_reply(reply="just rock") == (None, None)
     assert parse_reply(reply="[STOP]<answer>rock</answer>") == (None, None)
+
+
+class RequiredTalkCopycat(CopycatRPSGame):
+    """Copycat whose round-1 talk is required (the engine's only talk_required user in tests)."""
+
+    def get_dialogue_phase(self):
+        phase = super().get_dialogue_phase()
+        if phase is not None and phase.mode is DialogueMode.ACTION:
+            return replace(phase, talk_required=True)
+        return phase
+
+
+def run_required(*, replies, max_retries=0):
+    game = RequiredTalkCopycat(game_config={"seed": 0, "rounds": 2})
+    game.state["opening_move"] = "paper"
+    model = ScriptedChatModel(replies=replies)
+    runner = Runner(game=game, models={PLAYER: model}, max_retries=max_retries)
+    result = asyncio.run(runner.run())
+    return runner, model, result
+
+
+def action_phase(*, runner):
+    return next(e for e in runner.record if e["kind"] == "phase" and e["mode"] == "action")
+
+
+def messages_of(*, runner):
+    return [(e["player_id"], e["content"]) for e in runner.record if e["kind"] == "message"]
+
+
+def test_required_talk_with_a_real_message_posts_it():
+    runner, model, result = run_required(replies=[
+        reply(answer="notes"), reply(answer="Good luck!"), reply(answer="rock"),
+        reply(answer="NO CHANGE"), reply(answer="paper"),
+    ])
+    assert messages_of(runner=runner) == [(PLAYER, "Good luck!")]
+    assert TALK_REQUIRED_INSTRUCTION in prompt(model=model, index=1)
+    assert "SILENCE" not in TALK_REQUIRED_INSTRUCTION.replace("or SILENCE is not accepted", "")
+    assert TALK_INSTRUCTION not in prompt(model=model, index=1)
+    assert result["invalid"] == {PLAYER: 0}
+    assert action_phase(runner=runner)["talk_required"] is True
+
+
+def test_required_talk_answered_with_silence_is_retried_then_counts_one_invalid_and_posts_nothing():
+    runner, model, result = run_required(max_retries=2, replies=[
+        reply(answer="notes"), reply(answer="SILENCE"), reply(answer=""), reply(answer="silence."), reply(answer="rock"),
+        reply(answer="NO CHANGE"), reply(answer="paper"),
+    ])
+    assert "Your previous answer was rejected:" in prompt(model=model, index=2)
+    assert "SILENCE is not accepted" in prompt(model=model, index=2)
+    assert [e["call"] for e in calls(runner=runner)].count("talk") == 3  # first try plus max_retries retries
+    assert messages_of(runner=runner) == []
+    assert result["invalid"] == {PLAYER: 1}
+    assert runner.game.state["history"][0]["player"] == "rock"  # the game went on
+
+
+def test_required_talk_retry_that_says_something_is_not_invalid():
+    runner, model, result = run_required(max_retries=1, replies=[
+        reply(answer="notes"), "no tags here", reply(answer="Hello"), reply(answer="rock"),
+        reply(answer="NO CHANGE"), reply(answer="paper"),
+    ])
+    assert "your reply must end with <answer>...</answer>" in prompt(model=model, index=2)
+    assert NO_ANSWER_TAG in prompt(model=model, index=2)
+    assert messages_of(runner=runner) == [(PLAYER, "Hello")]
+    assert result["invalid"] == {PLAYER: 0}
+
+
+def test_required_talk_without_retries_counts_invalid_at_once():
+    runner, _, result = run_required(replies=[
+        reply(answer="notes"), reply(answer="SILENCE"), reply(answer="rock"), reply(answer="NO CHANGE"), reply(answer="paper"),
+    ])
+    assert messages_of(runner=runner) == [] and result["invalid"] == {PLAYER: 1}
+
+
+def test_a_normal_talk_phase_still_accepts_silence_and_counts_nothing():
+    runner, model, result = run_game(max_retries=2, replies=[
+        reply(answer="notes"), reply(answer="SILENCE"), reply(answer="rock"), reply(answer="NO CHANGE"), reply(answer="paper"),
+    ])
+    assert TALK_INSTRUCTION in prompt(model=model, index=1)
+    assert messages_of(runner=runner) == [] and result["invalid"] == {PLAYER: 0}
+    assert len(model.calls) == 5  # no retry was spent on the silence
+    assert action_phase(runner=runner)["talk_required"] is False
+
+
+# --- per-game instructions and the game-side talk check ---------------------------------
+
+
+class CustomTextCopycat(RequiredTalkCopycat):
+    """Copycat with its own talk and think text, and a talk check that refuses the word "bad"."""
+
+    def render_talk_instruction(self, *, phase, required):
+        return f"CUSTOM TALK required={required} phase={phase.phase}"
+
+    def render_think_instruction(self, *, phase):
+        return "CUSTOM THINK, or answer NO CHANGE"
+
+    def check_talk(self, *, player_id, phase, text):
+        return "the word bad is not allowed" if "bad" in text.lower() else None
+
+
+def run_custom(*, replies, max_retries=0):
+    game = CustomTextCopycat(game_config={"seed": 0, "rounds": 2})
+    game.state["opening_move"] = "paper"
+    model = ScriptedChatModel(replies=replies)
+    runner = Runner(game=game, models={PLAYER: model}, max_retries=max_retries)
+    result = asyncio.run(runner.run())
+    return runner, model, result
+
+
+def test_games_without_the_hooks_get_none_so_the_engine_text_is_used():
+    phase = RequiredTalkCopycat(game_config={"seed": 0, "rounds": 2}).get_dialogue_phase()
+    games = [
+        CopycatRPSGame(game_config={"seed": 0, "rounds": 2}),
+        CoupGame(game_config={"seed": 0, "players": 2}),
+        SheriffGame(game_config={"seed": 0, "players": 3}),
+    ]
+    for game in games:
+        assert game.render_talk_instruction(phase=phase, required=False) is None
+        assert game.render_talk_instruction(phase=phase, required=True) is None
+        assert game.render_think_instruction(phase=phase) is None
+        assert game.check_talk(player_id="p1", phase=phase, text="anything") is None
+
+
+def test_a_custom_instruction_replaces_the_engine_text_in_talk_and_think_calls():
+    _, model, _ = run_custom(replies=[
+        reply(answer="notes"), reply(answer="Hello"), reply(answer="rock"), reply(answer="NO CHANGE"), reply(answer="paper"),
+    ])
+    assert "CUSTOM THINK, or answer NO CHANGE" in prompt(model=model, index=0)
+    assert THINK_INSTRUCTION not in prompt(model=model, index=0)
+    assert "CUSTOM TALK required=True phase=" in prompt(model=model, index=1)
+    assert TALK_REQUIRED_INSTRUCTION not in prompt(model=model, index=1)
+    assert "CUSTOM THINK" in prompt(model=model, index=3)
+
+
+def test_a_talk_the_game_rejects_is_asked_again_with_the_reason():
+    runner, model, result = run_custom(max_retries=1, replies=[
+        reply(answer="notes"), reply(answer="that is bad"), reply(answer="fine"), reply(answer="rock"),
+        reply(answer="NO CHANGE"), reply(answer="paper"),
+    ])
+    assert "the word bad is not allowed" in prompt(model=model, index=2)
+    assert "CUSTOM TALK" in prompt(model=model, index=2)
+    assert messages_of(runner=runner) == [(PLAYER, "fine")]  # the rejected line was never said
+    assert result["invalid"] == {PLAYER: 0}
+
+
+def test_a_talk_the_game_keeps_rejecting_counts_one_invalid_and_posts_nothing():
+    runner, _, result = run_custom(max_retries=2, replies=[
+        reply(answer="notes"), reply(answer="bad"), reply(answer="very bad"), reply(answer="BAD"), reply(answer="rock"),
+        reply(answer="NO CHANGE"), reply(answer="paper"),
+    ])
+    assert [e["call"] for e in calls(runner=runner)].count("talk") == 3
+    assert messages_of(runner=runner) == []
+    assert result["invalid"] == {PLAYER: 1}
+
+
+def test_the_game_check_runs_only_in_required_talk_phases():
+    class Strict(CopycatRPSGame):
+        def check_talk(self, *, player_id, phase, text):
+            return "never"
+
+    game = Strict(game_config={"seed": 0, "rounds": 2})
+    game.state["opening_move"] = "paper"
+    model = ScriptedChatModel(replies=[
+        reply(answer="notes"), reply(answer="Hello"), reply(answer="rock"), reply(answer="NO CHANGE"), reply(answer="paper"),
+    ])
+    runner = Runner(game=game, models={PLAYER: model}, max_retries=2)
+    result = asyncio.run(runner.run())
+    assert messages_of(runner=runner) == [(PLAYER, "Hello")] and result["invalid"] == {PLAYER: 0}
+    assert len(model.calls) == 5

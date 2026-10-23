@@ -74,6 +74,11 @@ class DialoguePhase:
     talk_rounds: int = 0
     """How many times each speaker may talk before acting. 0 means straight to the action."""
 
+    talk_required: bool = False
+    """Whether each talk turn must say something. Then the runner rejects an empty answer or
+    SILENCE, asks again up to `max_retries`, and counts a player that still says nothing as
+    invalid. False: talking is optional."""
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "phase_id": self.phase_id,
@@ -81,6 +86,7 @@ class DialoguePhase:
             "mode": self.mode.value,
             "eligible": list(self.eligible),
             "talk_rounds": self.talk_rounds,
+            "talk_required": self.talk_required,
         }
 
 
@@ -207,6 +213,22 @@ class Game(ABC):
     def render_answer_request(self, *, legal_actions: list[Any]) -> str:
         """What to answer now and how to write it, e.g. "Your answer is your move: one of
         rock, paper, scissors." Added only to calls that ask for a game action."""
+
+    def render_talk_instruction(self, *, phase: DialoguePhase, required: bool) -> str | None:
+        """What a talk turn in this phase asks for, replacing the engine's TALK_INSTRUCTION
+        (or TALK_REQUIRED_INSTRUCTION when `required`). None keeps the engine's text."""
+        return None
+
+    def render_think_instruction(self, *, phase: DialoguePhase) -> str | None:
+        """What a thinking turn asks for, replacing the engine's THINK_INSTRUCTION. It must
+        still say how to keep the notes (NO_CHANGE). None keeps the engine's text."""
+        return None
+
+    def check_talk(self, *, player_id: str, phase: DialoguePhase, text: str) -> str | None:
+        """Whether a talk answer may be said, checked only in `talk_required` phases and only
+        for a non-empty answer. None accepts it; otherwise the reason, which the player is
+        shown when asked again. A rejected answer is treated like an empty one."""
+        return None
 
     @abstractmethod
     def parse_answer(self, *, player_id: str, answer: str) -> Any:

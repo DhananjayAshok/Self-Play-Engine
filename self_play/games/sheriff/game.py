@@ -39,7 +39,8 @@ from collections import Counter
 from typing import Any
 
 from self_play.game import DialogueMode, DialoguePhase, Game
-from self_play.games.sheriff.prompts import NAMES, answer_request, describe, parse_action, render_prompt, rules_text
+from self_play.games.sheriff.prompts import (NAMES, answer_request, decide_lead, describe, offer_goods_lead, parse_action,
+                                             render_prompt, rules_text, set_aside_lead)
 
 GOODS = {"apples": (2, 2), "cheese": (3, 2), "bread": (3, 2), "chickens": (4, 2),
          "pepper": (6, 4), "mead": (7, 4), "silk": (8, 4), "crossbow": (9, 4)}
@@ -62,7 +63,7 @@ DISCARD_START = 5
 RESHUFFLE_KEEP = 5
 """Cards left on top of each discard pile when the draw pile is rebuilt."""
 THINKING = ("round", "deal")
-DEFAULTS = {"talk_rounds": 2, "thinking": "round"}
+DEFAULTS = {"talk_rounds": 2, "thinking": "round", "negotiation_talk_required": False}
 
 
 def check_count(*, key: str, value: Any, minimum: int) -> None:
@@ -94,7 +95,8 @@ def sort_goods(*, cards: list[str]) -> list[str]:
 
 class SheriffGame(Game):
     """game_config: {"seed": int, "players": 3..5, "talk_rounds": int >= 0 (default 2, the
-    negotiation), "thinking": "round" (default) or "deal"}."""
+    negotiation), "thinking": "round" (default) or "deal", "negotiation_talk_required": bool
+    (default False; True makes every negotiation talk turn required)}."""
 
     name = "sheriff"
 
@@ -104,6 +106,8 @@ class SheriffGame(Game):
         if not isinstance(players, int) or isinstance(players, bool) or not MIN_PLAYERS <= players <= MAX_PLAYERS:
             raise ValueError(f"players must be an integer from {MIN_PLAYERS} to {MAX_PLAYERS}, not {players!r}")
         check_count(key="talk_rounds", value=config["talk_rounds"], minimum=0)
+        if not isinstance(config["negotiation_talk_required"], bool):
+            raise ValueError(f"negotiation_talk_required must be true or false, not {config['negotiation_talk_required']!r}")
         if config["thinking"] not in THINKING:
             raise ValueError(f"thinking must be one of {', '.join(THINKING)}, not {config['thinking']!r}")
         ids = [f"p{i}" for i in range(1, players + 1)]
@@ -220,7 +224,8 @@ class SheriffGame(Game):
         step, merchant = inspection["step"], inspection["merchant"]
         if step == "negotiate":
             return DialoguePhase(phase_id=phase_id, phase="negotiate", mode=DialogueMode.DISCUSSION,
-                                 eligible=(merchant, sheriff), talk_rounds=self.setting(key="talk_rounds"))
+                                 eligible=(merchant, sheriff), talk_rounds=self.setting(key="talk_rounds"),
+                                 talk_required=self.setting(key="negotiation_talk_required"))
         actor = {"offer_goods": merchant, "pay": (inspection["debt"] or {}).get("payer")}.get(step, sheriff)
         return DialoguePhase(phase_id=phase_id, phase=step, mode=DialogueMode.ACTION, eligible=(actor,))
 
@@ -412,7 +417,27 @@ class SheriffGame(Game):
         return render_prompt(rules=self.get_rules(observation=observation), observation=observation)
 
     def render_answer_request(self, *, legal_actions: list[Any]) -> str:
-        return answer_request(legal_actions=legal_actions)
+        return answer_request(legal_actions=legal_actions, lead=self._answer_lead())
+
+    def _answer_lead(self) -> str | None:
+        """The first line of the answer request in the steps with one actor (set_aside, offer_goods,
+        decide), built from what that actor may see. None in every other step: a load request is
+        written for several merchants at once, so its information is in the observation."""
+        phase = self._get_dialogue_phase()
+        if phase is None:
+            return None
+        state, actor = self.state, phase.eligible[0]
+        if phase.phase == "set_aside":
+            return set_aside_lead(hand=sort_goods(cards=state["hands"][actor]),
+                                  set_aside=sort_goods(cards=state["market"]["set_aside"]))
+        offer = state["inspection"]["offer"] if state["inspection"] else None
+        if phase.phase == "offer_goods":
+            return offer_goods_lead(gold=offer["gold"], offered=sort_goods(cards=offer["stand"] + offer["bag"]),
+                                    from_stand=sort_goods(cards=self._offerable(source="stand")),
+                                    from_bag=sort_goods(cards=self._offerable(source="bag")))
+        if phase.phase == "decide":
+            return decide_lead(gold=offer["gold"], goods=sort_goods(cards=offer["stand"] + offer["bag"]))
+        return None
 
     def parse_answer(self, *, player_id: str, answer: str) -> Any:
         return parse_action(answer=answer)

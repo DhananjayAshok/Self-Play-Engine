@@ -173,10 +173,12 @@ def test_player_count_and_settings_are_checked():
     for players in (2, 6, "3", True):
         with pytest.raises(ValueError):
             new_game(players=players)
-    for settings in ({"thinking": "all"}, {"talk_rounds": -1}, {"talk_rounds": 1.5}, {"talk_rounds": True}):
+    for settings in ({"thinking": "all"}, {"talk_rounds": -1}, {"talk_rounds": 1.5}, {"talk_rounds": True},
+                     {"negotiation_talk_required": "yes"}, {"negotiation_talk_required": 1}):
         with pytest.raises(ValueError):
             new_game(**settings)
-    for settings in ({"thinking": "round"}, {"thinking": "deal"}, {"talk_rounds": 0}, {"talk_rounds": 3}):
+    for settings in ({"thinking": "round"}, {"thinking": "deal"}, {"talk_rounds": 0}, {"talk_rounds": 3},
+                     {"negotiation_talk_required": True}, {"negotiation_talk_required": False}):
         new_game(**settings)  # accepted
 
 
@@ -332,6 +334,18 @@ def test_the_sheriff_chooses_the_order_and_a_passed_bag_goes_to_the_stand():
     assert game.get_legal_actions(player_id="p1") == [{"bag": "p2"}, {"bag": "p3"}]
     pass_bag(game=game, merchant="p3")
     assert game.get_legal_actions(player_id="p1") == [{"bag": "p2"}]  # one bag left: the runner plays it
+
+
+def test_the_negotiation_talk_is_optional_by_default_and_required_when_asked():
+    for settings, required in (({}, False), ({"negotiation_talk_required": False}, False),
+                               ({"negotiation_talk_required": True}, True)):
+        game = four_bags(**settings)
+        act(game=game, moves=[("p1", {"bag": "p2"})])
+        phase = current(game=game)
+        assert phase.phase == "negotiate" and phase.talk_required is required
+        assert phase.to_dict()["talk_required"] is required
+        act(game=game, moves=[("p2", {"gold": 0})])
+        assert current(game=game).talk_required is False  # no other phase asks for required talk
 
 
 def test_merchant_and_sheriff_talk_then_the_merchant_offers_gold_then_goods_then_the_sheriff_decides():

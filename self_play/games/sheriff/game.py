@@ -62,7 +62,7 @@ DISCARD_START = 5
 RESHUFFLE_KEEP = 5
 """Cards left on top of each discard pile when the draw pile is rebuilt."""
 THINKING = ("round", "deal")
-DEFAULTS = {"talk_rounds": 2, "thinking": "round"}
+DEFAULTS = {"talk_rounds": 2, "thinking": "round", "negotiation_talk_required": False}
 
 
 def check_count(*, key: str, value: Any, minimum: int) -> None:
@@ -94,7 +94,8 @@ def sort_goods(*, cards: list[str]) -> list[str]:
 
 class SheriffGame(Game):
     """game_config: {"seed": int, "players": 3..5, "talk_rounds": int >= 0 (default 2, the
-    negotiation), "thinking": "round" (default) or "deal"}."""
+    negotiation), "thinking": "round" (default) or "deal", "negotiation_talk_required": bool
+    (default False; True makes every negotiation talk turn required)}."""
 
     name = "sheriff"
 
@@ -104,6 +105,8 @@ class SheriffGame(Game):
         if not isinstance(players, int) or isinstance(players, bool) or not MIN_PLAYERS <= players <= MAX_PLAYERS:
             raise ValueError(f"players must be an integer from {MIN_PLAYERS} to {MAX_PLAYERS}, not {players!r}")
         check_count(key="talk_rounds", value=config["talk_rounds"], minimum=0)
+        if not isinstance(config["negotiation_talk_required"], bool):
+            raise ValueError(f"negotiation_talk_required must be true or false, not {config['negotiation_talk_required']!r}")
         if config["thinking"] not in THINKING:
             raise ValueError(f"thinking must be one of {', '.join(THINKING)}, not {config['thinking']!r}")
         ids = [f"p{i}" for i in range(1, players + 1)]
@@ -220,7 +223,8 @@ class SheriffGame(Game):
         step, merchant = inspection["step"], inspection["merchant"]
         if step == "negotiate":
             return DialoguePhase(phase_id=phase_id, phase="negotiate", mode=DialogueMode.DISCUSSION,
-                                 eligible=(merchant, sheriff), talk_rounds=self.setting(key="talk_rounds"))
+                                 eligible=(merchant, sheriff), talk_rounds=self.setting(key="talk_rounds"),
+                                 talk_required=self.setting(key="negotiation_talk_required"))
         actor = {"offer_goods": merchant, "pay": (inspection["debt"] or {}).get("payer")}.get(step, sheriff)
         return DialoguePhase(phase_id=phase_id, phase=step, mode=DialogueMode.ACTION, eligible=(actor,))
 

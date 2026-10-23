@@ -103,6 +103,7 @@ Each decision is one dialogue phase, and every big choice is a chain of small, o
 | `players` | (required) | 3 to 5 |
 | `talk_rounds` | 2 | talk turns for the merchant and the Sheriff in each negotiation |
 | `thinking` | `"round"` | `"round"` or `"deal"`, see Thinking |
+| `negotiation_talk_required` | `false` | `true` makes every negotiation talk turn required: the engine rejects saying nothing (an empty answer or SILENCE), asks again up to `max_retries`, and counts one invalid answer for a player that still says nothing. **[our choice]** |
 
 ## Interpretation (not stated in the rulebook)
 

@@ -37,6 +37,9 @@ To say nothing, answer <answer>{SILENCE}</answer>."""
 TALK_REQUIRED_INSTRUCTION = """Before you decide, you must say something to the table now. Put what you say inside <answer>; everyone hears it, and it is not binding.
 An empty answer or SILENCE is not accepted."""
 
+NO_ANSWER_TAG = "no <answer>...</answer> was found in the reply: your reply must end with <answer>...</answer> holding your answer"
+"""Why a reply without answer tags is rejected, in every retry."""
+
 _THINKING = re.compile(r"<thinking>(.*?)</thinking>", re.S | re.I)
 _ANSWER = re.compile(r"<answer>(.*?)</answer>", re.S | re.I)
 

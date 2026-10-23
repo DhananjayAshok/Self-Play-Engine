@@ -214,6 +214,22 @@ class Game(ABC):
         """What to answer now and how to write it, e.g. "Your answer is your move: one of
         rock, paper, scissors." Added only to calls that ask for a game action."""
 
+    def render_talk_instruction(self, *, phase: DialoguePhase, required: bool) -> str | None:
+        """What a talk turn in this phase asks for, replacing the engine's TALK_INSTRUCTION
+        (or TALK_REQUIRED_INSTRUCTION when `required`). None keeps the engine's text."""
+        return None
+
+    def render_think_instruction(self, *, phase: DialoguePhase) -> str | None:
+        """What a thinking turn asks for, replacing the engine's THINK_INSTRUCTION. It must
+        still say how to keep the notes (NO_CHANGE). None keeps the engine's text."""
+        return None
+
+    def check_talk(self, *, player_id: str, phase: DialoguePhase, text: str) -> str | None:
+        """Whether a talk answer may be said, checked only in `talk_required` phases and only
+        for a non-empty answer. None accepts it; otherwise the reason, which the player is
+        shown when asked again. A rejected answer is treated like an empty one."""
+        return None
+
     @abstractmethod
     def parse_answer(self, *, player_id: str, answer: str) -> Any:
         """Turn a player's answer text into an action. Raise ValueError(reason) if it
